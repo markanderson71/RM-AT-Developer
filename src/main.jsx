@@ -1,12 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { SHEETS_API_URL } from './config'
-import ATDevelopmentJournal from './ATDevelopmentJournal'
-
-window.__AT_API_URL__ = SHEETS_API_URL;
+import App from './App.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ATDevelopmentJournal />
+    <App />
   </React.StrictMode>
 )
