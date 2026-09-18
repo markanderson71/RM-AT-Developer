@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { C, font, GLOBAL_CSS } from "./theme.js";
 import { ATIcon, Card } from "./components/index.jsx";
 import { USERS } from "./lib/users.js";
-import { loadConfig, loadMaSessions } from "./api.js";
+import { loadConfig, loadMaSessions, sheetHealth } from "./api.js";
 import Sparring from "./tabs/Sparring.jsx";
 import referenceText from "../reference/psia.md?raw";
 
@@ -42,16 +42,19 @@ export default function App() {
   const [tab, setTab] = useState("sparring");
   const [data, setData] = useState({ loaded: false, error: false, maSessions: [], config: {} });
 
+  // Background load. The exam never waits on the Sheet: history and mentor notes only feed the examiner's probes.
+  const [loadTick, setLoadTick] = useState(0);
   useEffect(() => {
     if (!user) return;
     let alive = true;
+    setData((d) => ({ ...d, loaded: false, error: false }));
     (async () => {
       const [maSessions, config] = await Promise.all([loadMaSessions(), loadConfig()]);
       if (!alive) return;
-      setData({ loaded: true, error: maSessions.length === 0 && Object.keys(config).length === 0, maSessions, config });
+      setData({ loaded: true, error: sheetHealth.failed.has("MASessions") || sheetHealth.failed.has("Config"), maSessions, config });
     })();
     return () => { alive = false; };
-  }, [user]);
+  }, [user, loadTick]);
 
   if (!user) {
     return (
@@ -99,14 +102,18 @@ export default function App() {
             ))}
             <a href={OLD_APP} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12, color: C.dim, textDecoration: "none" }}>Everything else is on the old app ↗</a>
           </div>
+          {!data.loaded && <div style={{ margin: "8px 0 0", fontSize: 12, color: C.dim }}>Loading your history from the Sheet… you can start an exam now.</div>}
           {data.loaded && data.error && (
-            <div style={{ margin: "8px 0 0", padding: "8px 12px", borderRadius: 6, background: "rgba(224,80,40,0.12)", border: "1px solid rgba(224,80,40,0.3)", fontSize: 12, color: C.red, fontWeight: 600 }}>Couldn't load data from the Sheet. You can still run an exam; saving will retry the connection.</div>
+            <div style={{ margin: "8px 0 0", padding: "8px 12px", borderRadius: 6, background: "rgba(224,80,40,0.12)", border: "1px solid rgba(224,80,40,0.3)", fontSize: 12, color: C.red, fontWeight: 600, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span>Couldn't reach the Sheet after 4 tries. The exam and scoring still work; saving retries on its own.</span>
+              <button onClick={() => setLoadTick((n) => n + 1)} style={{ padding: "3px 10px", borderRadius: 5, border: `1px solid ${C.red}`, background: "transparent", color: C.red, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Retry</button>
+            </div>
           )}
         </div>
       </div>
 
       <div className="at-container" style={{ padding: "16px 16px 60px" }}>
-        {!data.loaded ? <div style={{ color: C.muted, padding: 20 }}>Loading…</div> : (
+        {(
           <>
             {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} referenceText={referenceText}
               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}

@@ -64,7 +64,9 @@ const lines = (msgs, me, them) => (msgs || []).map((m) => `${m.role === "user" ?
 export const attemptTotal = (a) => { if (!a?.scores) return 0; const v = sectionAverages(a); return Math.round((v.ma + v.tu) * 100) / 100; };
 
 /** True when there is anything in the exam that a "New exam" click would destroy. */
-export const hasUnsavedWork = (exam) => exam.phase !== "setup" && !(exam.savedSessionId && exam.savedHash === examHash(exam));
+/** Has Mark actually put anything into this exam? A blank form has nothing to start over from. */
+export const hasContent = (exam) => !!(exam.observations?.trim() || exam.rootCause?.trim() || exam.presentation?.trim() || exam.dialogMessages?.length || exam.prescriptionDialog?.length || exam.debriefMessages?.length || exam.attempts?.length || Object.values(exam.drafts || {}).some((d) => d?.trim()));
+export const hasUnsavedWork = (exam) => hasContent(exam) && !(exam.savedSessionId && exam.savedHash === examHash(exam));
 
 /** The exam as the scorer sees it: sections only, no summary. Same shape buildSession saves. */
 export function scoringSession(exam) {

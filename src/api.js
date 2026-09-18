@@ -1,34 +1,53 @@
 // Fetch wrappers for /api/*. Harvested from ATDevelopmentJournal.jsx: response-shape guards on getAll
 // ({rows}|{data}|array, wrapped in {response}), update-then-create upsert, never throws to the UI.
 
-async function sheetPost(payload) {
-  const res = await fetch("/api/sheet", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-  });
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = { error: `non-JSON response: ${text.slice(0, 200)}` }; }
-  if (data && typeof data.response === "string") { try { data = JSON.parse(data.response); } catch { /* keep */ } }
-  return { ok: res.ok && !data?.error, data };
+// The Apps Script endpoint fails transiently: the 302 drops the POST and the proxy hands back a Google HTML page
+// (seen as 404 / non-JSON), or the script replies "Unknown action: ". Both clear on the next try. Reads AND writes
+// retry these; a real answer ("Row not found…") is never retried. Without the write retry, a transient failure on
+// update fell through to create and could duplicate the row.
+const TRANSIENT = /Unknown action|non-JSON|<!DOCTYPE|<html|HTTP 5\d\d|HTTP 404|Failed to fetch|NetworkError|timeout/i;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function sheetPostOnce(payload) {
+  try {
+    const res = await fetch("/api/sheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: `non-JSON response: ${text.slice(0, 200)}` }; }
+    if (data && typeof data.response === "string") { try { data = JSON.parse(data.response); } catch { /* keep */ } }
+    if (!res.ok && !data?.error) data = { ...(data || {}), error: `HTTP ${res.status}` };
+    return { ok: res.ok && !data?.error, data };
+  } catch (e) { return { ok: false, data: { error: String(e?.message || e) } }; }
 }
 
+async function sheetPost(payload, attempts = 4) {
+  let last;
+  for (let i = 0; i < attempts; i++) {
+    last = await sheetPostOnce(payload);
+    const err = typeof last.data?.error === "string" ? last.data.error : last.data?.error ? JSON.stringify(last.data.error) : "";
+    if (last.ok || !TRANSIENT.test(err)) return last;
+    console.warn(`sheet ${payload._action} ${payload._sheet}: transient (${err.slice(0, 80)}), retry ${i + 1}/${attempts - 1}`);
+    if (i < attempts - 1) await sleep(800 * (i + 1));
+  }
+  return last;
+}
+
+/** Sheets whose last getAll failed after retries — lets the UI tell "empty" from "couldn't load". */
+export const sheetHealth = { failed: new Set() };
+
 export async function apiGet(sheetName) {
-  try {
-    const { data } = await sheetPost({ _action: "getAll", _sheet: sheetName });
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data?.rows)) return data.rows;
-    if (Array.isArray(data?.data)) return data.data;
-    console.warn("apiGet: unexpected shape for", sheetName, Object.keys(data || {}));
-    return [];
-  } catch (e) { console.error("apiGet", sheetName, e); return []; }
+  const { data } = await sheetPost({ _action: "getAll", _sheet: sheetName });
+  const rows = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : Array.isArray(data?.data) ? data.data : null;
+  if (rows) { sheetHealth.failed.delete(sheetName); return rows; }
+  console.warn("apiGet: failed or unexpected shape for", sheetName, data?.error || Object.keys(data || {}));
+  sheetHealth.failed.add(sheetName);
+  return [];
 }
 
 async function apiAction(action, sheetName, row) {
-  try {
-    const { ok, data } = await sheetPost({ ...row, _action: action, _sheet: sheetName });
-    if (!ok) console.error("apiAction failed:", action, sheetName, row?.id, data?.error);
-    return ok;
-  } catch (e) { console.error("apiAction", action, e); return false; }
+  const { ok, data } = await sheetPost({ ...row, _action: action, _sheet: sheetName });
+  if (!ok) console.error("apiAction failed:", action, sheetName, row?.id, data?.error);
+  return ok;
 }
 export const apiCreate = (s, row) => apiAction("create", s, row);
 export const apiUpdate = (s, row) => apiAction("update", s, row);

@@ -4,7 +4,7 @@ import { Button, Composer, Field, Hint, Input, Select, Textarea, Thread, speakTe
 import { callClaude, saveMaSession, scoreExtract, scoreEvaluate } from "../api.js";
 import { USERS, today } from "../lib/users.js";
 import { parseAIJson, parseSummary } from "../lib/parseSummary.js";
-import { PHASES, PHASE_LABEL, SECTIONS, CRITERIA, DIAGNOSTICS, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, scoringSession, sectionAverages, isLegacyAttempt, attemptTotal, bestAttempt, YT_RE } from "../lib/exam.js";
+import { PHASES, PHASE_LABEL, SECTIONS, CRITERIA, DIAGNOSTICS, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, sectionAverages, isLegacyAttempt, attemptTotal, bestAttempt, YT_RE } from "../lib/exam.js";
 import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock, buildScorerSystem, buildScoreInput } from "../lib/prompts.js";
 
 const TONE = C.exam;
@@ -135,7 +135,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
           <label style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
             <input type="checkbox" checked={autoSpeak} onChange={(e) => setAutoSpeak(e.target.checked)} style={{ accentColor: C.orange }} /> Read replies aloud
           </label>
-          {exam.phase !== "setup" && <Button tone={TONE} onClick={() => reset()} disabled={loading} style={{ padding: "4px 10px", fontSize: 12 }}>＋ New exam</Button>}
+          {exam.phase !== "setup" && exam.phase !== "scored" && hasContent(exam) && <Button tone={TONE} onClick={() => reset()} disabled={loading} style={{ padding: "4px 10px", fontSize: 12 }}>＋ New exam</Button>}
         </div>
       </div>
 

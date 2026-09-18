@@ -15,6 +15,8 @@ const exam = { ...E.freshExam(), phase: 'scored', who: 'Solid L3 candidate', act
   prescriptionDialog: [{ role: 'user', content: 'Try this.' }], presentation: 'pres', debriefMessages: [{ role: 'assistant', content: 'How?' }, { role: 'user', content: 'Because.' }],
   attempts: [{ ...legacy, attemptNum: 1 }, { ...rag, scorer: 'v2-rag-2', attemptNum: 2 }], attemptNumber: 3 };
 
+assert.equal(E.hasContent(E.freshExam()), false); assert.equal(E.hasContent({ ...E.freshExam(), phase: 'observe', who: 'x' }), false, 'setup fields alone are not work');
+assert.equal(E.hasContent({ ...E.freshExam(), observations: 'tails wash' }), true); assert.equal(E.hasUnsavedWork({ ...E.freshExam(), phase: 'observe' }), false);
 // labels
 assert.equal(E.PHASE_LABEL.present, 'Examiner – Present'); assert.equal(E.PHASES.length, 7);
 // scoring payload: sections, no summary, nothing from private state leaks beyond what buildSession already saves
