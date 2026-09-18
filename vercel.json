@@ -14,6 +14,9 @@
   "functions": {
     "api/score.js": {
       "maxDuration": 300
+    },
+    "api/score/*.js": {
+      "maxDuration": 300
     }
   }
 }

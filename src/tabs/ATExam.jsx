@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { C } from "../theme.js";
 import { Button, Composer, Field, Hint, Input, Select, Textarea, Thread, speakText } from "../components/index.jsx";
-import { callClaude, saveMaSession } from "../api.js";
+import { callClaude, saveMaSession, scoreExtract, scoreEvaluate } from "../api.js";
 import { USERS, today } from "../lib/users.js";
 import { parseAIJson, parseSummary } from "../lib/parseSummary.js";
-import { PHASES, PHASE_LABEL, CRITERIA, freshExam, loadExam, persistExam, buildSession, hashOf, attemptTotal, bestAttempt, YT_RE } from "../lib/exam.js";
+import { PHASES, PHASE_LABEL, SECTIONS, CRITERIA, DIAGNOSTICS, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, scoringSession, sectionAverages, isLegacyAttempt, attemptTotal, bestAttempt, YT_RE } from "../lib/exam.js";
 import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock, buildScorerSystem, buildScoreInput } from "../lib/prompts.js";
 
 const TONE = C.exam;
@@ -19,6 +19,7 @@ const AUTOSPEAK_KEY = "rmat_autospeak";
 export default function ATExam({ maSessions, mentorAssessments, referenceText, onSaved }) {
   const [exam, setExam] = useState(loadExam);
   const [loading, setLoading] = useState(false);
+  const [scoreStep, setScoreStep] = useState("");
   const [saveState, setSaveState] = useState({ status: "idle", message: "" }); // idle | saving | saved | error
   const [autoSpeak, setAutoSpeak] = useState(() => { try { return window.localStorage.getItem(AUTOSPEAK_KEY) === "1"; } catch { return false; } });
   const examRef = useRef(exam); examRef.current = exam;
@@ -68,21 +69,35 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
     setLoading(false); say(resp);
   };
 
+  // Two-step RAG scorer (§8): extract → evaluate. If either call fails, fall back to the old single-prompt scorer
+  // and SAY SO — a legacy score is on the pre-2026 lines and runs high against Chris; it must never pass as the real one.
   const score = async () => {
     setLoading(true);
-    const system = buildScorerSystem({ mentorAssessments, maSessions, users: USERS, referenceText });
-    const input = buildScoreInput(examRef.current, { pastSessions: maSessions, parseSummary });
-    const resp = await callClaude([{ role: "user", content: input }], system);
-    const parsed = parseAIJson(resp);
-    const attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), timestamp: new Date().toISOString(), attemptNum: examRef.current.attemptNumber };
-    upd((p) => ({ phase: "scored", result: parsed, attempts: [...p.attempts, attempt], attemptNumber: p.attemptNumber + 1 }));
-    setLoading(false);
+    const stamp = { timestamp: new Date().toISOString(), attemptNum: examRef.current.attemptNumber };
+    let attempt;
+    try {
+      setScoreStep("Step 1 of 2 — taking inventory of what you actually said (about a minute)…");
+      const extraction = await scoreExtract(scoringSession(examRef.current));
+      setScoreStep("Step 2 of 2 — scoring against the 2026 form and Chris's feedback (1–2 minutes)…");
+      const result = await scoreEvaluate(extraction, examRef.current.savedSessionId);
+      attempt = { ...result, scorer: result.meta?.scorer || "rag", ...stamp };
+    } catch (e) {
+      console.error("score:", e);
+      setScoreStep("New scorer unavailable — falling back to the old scorer…");
+      const system = buildScorerSystem({ mentorAssessments, maSessions, users: USERS, referenceText });
+      const input = buildScoreInput(examRef.current, { pastSessions: maSessions, parseSummary });
+      const resp = await callClaude([{ role: "user", content: input }], system);
+      const parsed = parseAIJson(resp);
+      attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), scorer: "legacy", scorer_error: String(e.message || e).slice(0, 200), ...stamp };
+    }
+    upd((p) => ({ phase: "scored", result: attempt.scores ? attempt : null, attempts: [...p.attempts, attempt], attemptNumber: p.attemptNumber + 1 }));
+    setScoreStep(""); setLoading(false);
   };
 
   // ── save (hash-diff, update-then-create, retry) ────────────────────────────
   const saveToHistory = async () => {
     const session = buildSession(examRef.current, { parseAIJson });
-    const h = hashOf({ t: session.transcript, s: session.sections, a: examRef.current.attempts });
+    const h = examHash(examRef.current);
     if (examRef.current.savedHash === h) { setSaveState({ status: "saved", message: "Already saved — nothing changed." }); return; }
     setSaveState({ status: "saving", message: "" });
     const ok = await saveMaSession(session);
@@ -90,7 +105,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
     else setSaveState({ status: "error", message: "Save failed — the session is still here. Check the connection and retry." });
   };
 
-  const reset = (skipConfirm) => { if (skipConfirm === true || exam.phase === "setup" || confirm("Discard this exam? Unsaved work will be lost.")) { setExam(freshExam()); setSaveState({ status: "idle", message: "" }); } };
+  const reset = (skipConfirm) => { if (skipConfirm === true || !hasUnsavedWork(exam) || confirm("Start a new exam? This one isn't saved — its work will be lost.")) { setExam(freshExam()); setSaveState({ status: "idle", message: "" }); } };
 
   // ── UI ─────────────────────────────────────────────────────────────────────
   const ytId = (exam.videoUrl || "").match(YT_RE)?.[1];
@@ -116,9 +131,12 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
             <span key={ph} style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 4, color: i === stepIdx ? TONE : i < stepIdx ? C.muted : C.faint, background: i === stepIdx ? `${TONE}14` : "transparent", border: `1px solid ${i === stepIdx ? TONE + "40" : "rgba(255,255,255,0.05)"}` }}>{i + 1}. {PHASE_LABEL[ph]}</span>
           ))}
         </div>
-        <label style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-          <input type="checkbox" checked={autoSpeak} onChange={(e) => setAutoSpeak(e.target.checked)} style={{ accentColor: C.orange }} /> Read replies aloud
-        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <label style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+            <input type="checkbox" checked={autoSpeak} onChange={(e) => setAutoSpeak(e.target.checked)} style={{ accentColor: C.orange }} /> Read replies aloud
+          </label>
+          {exam.phase !== "setup" && <Button tone={TONE} onClick={() => reset()} disabled={loading} style={{ padding: "4px 10px", fontSize: 12 }}>＋ New exam</Button>}
+        </div>
       </div>
 
       {/* 1 · Setup */}
@@ -200,7 +218,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
           {contextLine}
           <Hint style={{ marginBottom: 8 }}>The examiner heard the dialog and the prescription. Now the technical why: observations by phase, the cascade and root cause, why this task at the biomechanics level, why this terrain, how it serves the subject's intent.</Hint>
           <Review title="Your private notes (examiner doesn't see these)">{`Observations: ${exam.observations}\n\nRoot cause: ${exam.rootCause}`}</Review>
-          <Field label="Presentation to the examiner">
+          <Field label="Examiner – Present">
             <Textarea value={exam.presentation} onChange={(v) => upd({ presentation: v })} style={{ minHeight: 160, fontSize: 14, lineHeight: 1.7 }} placeholder="Observed by phase — ski and body… Primary fundamental and the cascade… Why this IDP task, why this terrain… How it serves their intent." />
           </Field>
           <div style={{ display: "flex", gap: 6 }}>
@@ -221,18 +239,16 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
           <div style={{ display: "flex", gap: 6 }}>
             <Button tone={C.muted} onClick={() => go("present")} disabled={loading}>Back</Button>
             <Button tone={C.amber} onClick={score} disabled={loading || exam.debriefMessages.filter((m) => m.role === "user").length < 1} style={{ flex: 1 }}>
-              {loading ? "Scoring…" : exam.attempts.length === 0 ? "Score my MA" : `Score revision ${exam.attempts.length} of 3`}
+              {loading ? "Scoring…" : exam.attempts.length === 0 ? "Score my MA" : `Score revision ${exam.attempts.length} of ${MAX_REVISIONS}`}
             </Button>
           </div>
+          {scoreStep && <Hint style={{ marginTop: 8, color: C.amber }}>{scoreStep} Keep this tab open.</Hint>}
         </>
       )}
 
       {/* 7 · Scored */}
-      {exam.phase === "scored" && <Scored exam={exam} saveState={saveState} onRevise={() => { setSaveState({ status: "idle", message: "" }); upd({ phase: "dialog", prescriptionDialog: [], presentation: "", debriefMessages: [], result: null }); }} onSave={saveToHistory} onNew={() => reset(!!exam.savedSessionId)} />}
+      {exam.phase === "scored" && <Scored exam={exam} saveState={saveState} onRevise={() => { setSaveState({ status: "idle", message: "" }); upd({ phase: "dialog", prescriptionDialog: [], presentation: "", debriefMessages: [], result: null }); }} onSave={saveToHistory} onNew={() => reset()} />}
 
-      {exam.phase !== "setup" && exam.phase !== "scored" && (
-        <div style={{ textAlign: "right", marginTop: 12 }}><button onClick={() => reset()} style={{ background: "none", border: "none", color: C.faint, fontSize: 11, cursor: "pointer" }}>Discard exam</button></div>
-      )}
     </div>
   );
 }
@@ -240,39 +256,69 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
 function Scored({ exam, saveState, onRevise, onSave, onNew }) {
   const current = exam.attempts[exam.attempts.length - 1];
   const best = bestAttempt(exam.attempts);
-  const canRevise = exam.attempts.length < 4;
+  const canRevise = exam.attempts.length <= MAX_REVISIONS;
   const didWell = current?.did_well || current?.strengths || [];
   const opp = current?.opportunity || current?.gaps || [];
+  const legacy = isLegacyAttempt(current);
+  const avgs = current?.scores ? sectionAverages(current) : null;
+  const meets = avgs && !legacy ? avgs.ma >= 4 && avgs.tu >= 4 : null;
+  const cite = (k) => (current?.citations?.[k] || []).map((id) => current.citation_details?.[id]).filter(Boolean);
+  const who = (c) => `${c.author === "psia" ? "PSIA" : c.author ? c.author[0].toUpperCase() + c.author.slice(1) : c.source}${c.date ? `, ${c.date}` : ""}`;
   return (
     <div style={{ padding: 14, borderRadius: 8, background: `${TONE}0a`, border: `1px solid ${TONE}1a` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: TONE }}>{exam.attempts.length <= 1 ? "Initial score" : `Revision ${exam.attempts.length - 1} of 3`} · {today()}</div>
-        {exam.attempts.length > 1 && <div style={{ fontSize: 11, color: C.green }}>★ best attempt</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: TONE }}>{exam.attempts.length <= 1 ? "Initial score" : `Revision ${exam.attempts.length - 1} of ${MAX_REVISIONS}`} · {today()}</div>
+        {meets != null && <div style={{ fontSize: 12, fontWeight: 800, padding: "3px 10px", borderRadius: 5, color: meets ? C.green : C.red, background: `${meets ? C.green : C.red}14`, border: `1px solid ${meets ? C.green : C.red}40` }}>{meets ? "Meets Standards" : "Does Not Meet Standards"}</div>}
       </div>
+
+      {legacy && current?.scores && (
+        <Hint style={{ color: C.orange, marginBottom: 10, lineHeight: 1.5 }}>
+          ⚠ Scored by the OLD scorer — the new one was unavailable{current.scorer_error ? ` (${current.scorer_error})` : ""}. These are the pre-2026 lines and have run 1–2 points high against Chris. No Equipment or Desired Performances line, no pass/fail. Revise-and-score again to retry the new scorer.
+        </Hint>
+      )}
 
       {current?.scores ? (
         <>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-            {CRITERIA.map((c) => (
-              <div key={c.key} style={{ textAlign: "center", minWidth: 52 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor(current.scores[c.key] || 0) }}>{current.scores[c.key] || "—"}</div>
-                <div style={{ fontSize: 9, color: C.muted, fontWeight: 600 }}>{c.label}</div>
+          {SECTIONS.map((sec) => (
+            <div key={sec.key} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{sec.label}</div>
+                {!legacy && <div style={{ fontSize: 11, color: C.muted }}>section average <span style={{ fontWeight: 800, color: scoreColor(avgs[sec.key]) }}>{avgs[sec.key].toFixed(2)}</span> <span style={{ color: C.faint }}>/ 4 to pass</span></div>}
               </div>
-            ))}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {sec.lines.map((c) => (
+                  <div key={c.key} style={{ textAlign: "center", minWidth: 92, flex: 1, padding: "6px 4px", borderRadius: 6, background: "rgba(255,255,255,0.02)" }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: current.scores[c.key] ? scoreColor(current.scores[c.key]) : C.faint }}>{current.scores[c.key] || "—"}</div>
+                    <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{c.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: C.dim, marginBottom: 10 }}>
+            Diagnostics (not on the 2026 form): {DIAGNOSTICS.map((d) => `${d.label} ${current.scores[d.key] ?? "—"}`).join(" · ")}
           </div>
+
+          {current.key_learning && <Block tone={C.amber} label="Key focus">{current.key_learning}</Block>}
+          {didWell.length > 0 && <Block tone={C.green} label="What you did well">{didWell.join(" · ")}</Block>}
+          {opp.length > 0 && <Block tone={C.orange} label="Opportunity">{opp.join(" · ")}</Block>}
+          {current.time_note && <Block tone={C.blue} label="Delivery">{current.time_note}</Block>}
+
           {current.score_rationale && (
-            <details style={{ marginBottom: 8 }}>
-              <summary style={{ fontSize: 11, color: C.muted, cursor: "pointer" }}>Score rationale</summary>
+            <details style={{ margin: "8px 0" }} open={!legacy}>
+              <summary style={{ fontSize: 11, color: C.muted, cursor: "pointer" }}>Why each score · what moves it up</summary>
               <div style={{ padding: "6px 8px", borderRadius: 4, background: "rgba(255,255,255,0.02)", marginTop: 4 }}>
-                {CRITERIA.map((c) => current.score_rationale[c.key] && (
-                  <div key={c.key} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.45 }}><span style={{ fontWeight: 700, color: scoreColor(current.scores[c.key] || 0) }}>{c.label} ({current.scores[c.key]}): </span><span style={{ color: "#b0b8c0" }}>{current.score_rationale[c.key]}</span></div>
+                {[...CRITERIA, ...(legacy ? DIAGNOSTICS : [])].map((c) => current.score_rationale[c.key] && (
+                  <div key={c.key} style={{ marginBottom: 10, fontSize: 12, lineHeight: 1.5 }}>
+                    <div><span style={{ fontWeight: 700, color: scoreColor(current.scores[c.key] || 0) }}>{c.label} ({current.scores[c.key]}): </span><span style={{ color: "#b0b8c0" }}>{current.score_rationale[c.key]}</span></div>
+                    {current.evidence_count?.[c.key] && <div style={{ color: C.dim, marginTop: 2 }}>Evidence — {current.evidence_count[c.key]}</div>}
+                    {current.gap_to_next?.[c.key] && <div style={{ color: C.amber, marginTop: 2 }}>→ {current.gap_to_next[c.key]}</div>}
+                    {cite(c.key).length > 0 && <div style={{ color: C.dim, marginTop: 2, fontSize: 11 }}>Based on: {cite(c.key).map((d, i) => <span key={i} title={d.text} style={{ marginRight: 8, color: d.author === "chris" ? C.examiner : C.dim, cursor: "help" }}>{who(d)}{d.title ? ` — ${d.title}` : ""}</span>)}</div>}
+                  </div>
                 ))}
               </div>
             </details>
           )}
-          {didWell.length > 0 && <Block tone={C.green} label="What you did well">{didWell.join(" · ")}</Block>}
-          {opp.length > 0 && <Block tone={C.orange} label="Opportunity">{opp.join(" · ")}</Block>}
-          {current.key_learning && <Block tone={C.amber} label="Key focus">{current.key_learning}</Block>}
         </>
       ) : (
         <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(255,255,255,0.02)", marginBottom: 10 }}>
@@ -283,16 +329,16 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
 
       {exam.attempts.length > 1 && (
         <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>All attempts</div>
-          {exam.attempts.map((a, i) => (
-            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "4px 0", borderBottom: "0.5px solid rgba(255,255,255,0.03)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>All attempts <span style={{ fontWeight: 400, color: C.dim }}>· CE Ev Rx | DP Bio Eq</span></div>
+          {exam.attempts.map((a, i) => { const v = a.scores ? sectionAverages(a) : null; return (
+            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "4px 0", borderBottom: "0.5px solid rgba(255,255,255,0.03)", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: a === best ? C.green : C.muted, minWidth: 75 }}>{a === best ? "★ " : ""}{i === 0 ? "Initial" : `Rev ${i}`}</span>
               <div style={{ display: "flex", gap: 3 }}>
-                {CRITERIA.map((c) => { const v = a.scores?.[c.key] || 0; return <div key={c.key} style={{ width: 22, height: 22, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: scoreColor(v), background: `${scoreColor(v)}12`, border: `1px solid ${scoreColor(v)}30` }}>{v || "—"}</div>; })}
+                {CRITERIA.map((c, j) => { const s = a.scores?.[c.key] || 0; return <div key={c.key} style={{ width: 22, height: 22, marginLeft: j === 3 ? 6 : 0, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: s ? scoreColor(s) : C.faint, background: `${scoreColor(s)}12`, border: `1px solid ${scoreColor(s)}30` }}>{s || "—"}</div>; })}
               </div>
-              <span style={{ fontSize: 11, color: C.dim }}>Total {attemptTotal(a)}</span>
+              {v && <span style={{ fontSize: 11, color: C.dim }}>MA {v.ma.toFixed(2)} · TU {v.tu.toFixed(2)}{isLegacyAttempt(a) ? " · old scorer" : ""}</span>}
             </div>
-          ))}
+          ); })}
         </div>
       )}
 
@@ -301,10 +347,10 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
       )}
 
       <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
-        {canRevise && <Button tone={C.blue} onClick={onRevise} style={{ flex: 1 }}>Revise ({4 - exam.attempts.length} left)</Button>}
+        {canRevise && <Button tone={C.blue} onClick={onRevise} style={{ flex: 1 }}>Revise ({MAX_REVISIONS + 1 - exam.attempts.length} left)</Button>}
         <Button tone={C.green} onClick={onSave} disabled={saveState.status === "saving"} style={{ flex: 1 }}>{saveState.status === "saving" ? "Saving…" : saveState.status === "error" ? "Retry save" : "Save to MA History"}</Button>
+        <Button tone={TONE} onClick={onNew} style={{ flex: 1 }}>＋ Start a new exam</Button>
       </div>
-      <div style={{ textAlign: "right", marginTop: 10 }}><button onClick={onNew} style={{ background: "none", border: "none", color: C.faint, fontSize: 11, cursor: "pointer" }}>{exam.savedSessionId ? "Start a new exam" : "Discard and start over"}</button></div>
     </div>
   );
 }

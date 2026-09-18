@@ -6,4 +6,3 @@ dist
 .vercel
 .env*
 out/
-.DS_Store

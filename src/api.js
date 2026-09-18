@@ -51,6 +51,16 @@ export async function callClaude(messages, system, { model = "claude-sonnet-4-6"
   }
 }
 
+// ── Scoring (§8): two calls so neither nears the function time limit. Throws on failure — the caller decides the fallback. ──
+async function postJson(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let data = null; try { data = await res.json(); } catch { /* HTML error page / timeout */ }
+  if (!res.ok || !data || data.error) throw new Error(data?.error || `${url} → HTTP ${res.status}`);
+  return data;
+}
+export const scoreExtract = async (session) => (await postJson("/api/score/extract", { session })).extraction;
+export const scoreEvaluate = (extraction, sessionId) => postJson("/api/score/evaluate", { extraction, sessionId: sessionId || undefined });
+
 // ── MA sessions ────────────────────────────────────────────────────────────────
 // Column-mapping guards harvested from the old loader: id column mislabeled `b`, JSON blob in the
 // data/date column, JSON-string fields (sections, mentorFeedback), legacy Config rows ignored.
