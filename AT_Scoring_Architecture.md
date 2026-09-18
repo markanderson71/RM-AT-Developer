@@ -1,6 +1,6 @@
 # AT Development Journal — Scoring System Architecture
 
-**Status:** Design complete, build not started
+**Status:** Building — sessions 1 and 4 built; 2 waiting on a transcript
 **Owner:** Mark Anderson
 **Ground truth:** Chris (AT Assessor)
 **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
@@ -100,7 +100,12 @@ Gates and Mike use the same sources with `author` set accordingly. Chris is priv
 
 ### 5.3 Criteria tags
 
-`describe` · `cause_effect` · `evaluate` · `prescription` · `biomechanics` · `communication` · `general`
+**Scored criteria (2026 AT MA/TU Assessment Form, confirmed by Chris 2026-09-17):**
+MA section — `cause_effect` · `evaluate` · `prescription` · TU section — `desired_performances` · `biomechanics` · `equipment`.
+Pass rule: MA section average ≥ 4 **and** TU section average ≥ 4.
+
+**Tag-only (not scored, still useful for retrieval):** `describe` · `communication` · `general`.
+Describe and Communication were scored lines on the pre-2026 form; the current form folds them into Cause and Effect / Prescription. Chunks keep the tags so the store can still retrieve on them.
 
 ### 5.4 Skill tags
 
@@ -193,9 +198,11 @@ Total ~30K tokens for the evaluate step. Fixed. Never grows.
 | Exemplars | ~6K | 2–3 `exemplar` chunks most similar to this session. Prefer same MA type. |
 | PSIA reference | remaining (~8–10K) | Top-k `psia_doc` chunks by similarity, filtered by skills present in extraction. |
 | Session extraction | ~4K | The Step 1 output. Always. |
-| Reasoning template | ~2K | Static. See §8.2. |
+| Reasoning template | ~3K | Static. See §8.2. (2K → 3K in session 4 for unit definitions; total unchanged, PSIA absorbs it.) |
 
-If Chris chunks under-fill, PSIA reference takes the slack. If over budget, trim PSIA reference first, exemplars second, never Chris chunks or definitions.
+If Chris chunks under-fill, PSIA reference takes the slack **up to a 12K cap** (session 4: with 9 Chris chunks and no exemplars, uncapped slack would hand PSIA ~20K of marginal matches). If over budget, trim PSIA reference first, exemplars second, never Chris chunks or definitions.
+
+Definitions are *fetched* by `source_ref` prefix (`at-ma-tu-assessment-form-2026.md#`), not searched. Exemplar slot takes **Chris-scored exemplars only** (`source = chris_score`); `past_session` chunks carry old-scorer numbers and are never shown to the evaluator as examples.
 
 ### 7.2 Query
 
@@ -207,6 +214,7 @@ The **Step 1 extraction** is embedded as the retrieval query, not the raw transc
 2. Cosine similarity rank within each slot.
 3. Chris slot filled before PSIA slot. This is the architectural guarantee that Chris is ground truth.
 4. Recency tiebreak within Chris slot.
+5. **Self-exclusion:** chunks whose `source_ref` is `session:<id>` of the session being scored are dropped. Chris's comment on a session must not inform that session's AI score, or agreement (§9) measures retrieval instead of judgment. `includeSelf` exists for A/B debugging only.
 
 ### 7.4 Citation
 
@@ -267,6 +275,14 @@ Standing calibration rules carried into the template (from the current scorer; p
 - Metacognition need not be stated; the behavior is the evidence.
 - Cognitive-level check: Apply ≈ 3, Analyze ≈ 4, Evaluate/Create ≈ 5. If the cognitive level contradicts the score, the cognitive level wins.
 
+Floor rules (added session 4 — the rules above all guard against scoring low; Chris's first scorecard showed the old scorer 1–2 points **high** on every line). If the case for 3 fails, the template requires a case for 2 and for 1.
+- Naming is not connecting: fundamentals mentioned without a stated link to ski performance and an outcome are not cause-and-effect evidence.
+- A line not addressed scores 1. `equipment.addressed = false` ⇒ Equipment 1 (also enforced in code, logged in `quality.guards_applied`).
+- "Beginning to appear" is a 2, not a 3. Accurate-but-generic is L3 work. Volume is not depth.
+- Score against the essential elements each form definition names, not general competence.
+
+Chris's own content (X→Y→Z frame, peer piece as coaching cue "plus", the equipment trio, the prescription chain) is **not** in the template. It lives in the store as seven single-point chunks and arrives by retrieval, cited.
+
 ### 8.3 Output (backward compatible)
 
 ```json
@@ -283,7 +299,11 @@ Standing calibration rules carried into the template (from the current scorer; p
 }
 ```
 
+`justifications` carries `"2"` and `"1"` keys when the case for 3 fails. Also additive (session 4): `section_averages`, `meets_standards`, `citation_details` (author/date/text per cited chunk, for §12.2), `chris_conflicts`, `quality{citations_invalid, criteria_without_citation, guards_applied}`, `extraction`, `meta{scorer, models, ms, context manifest}`.
+
 `scores`, `score_rationale`, `did_well`, `opportunity`, `key_learning` — existing fields, unchanged shape. `justifications`, `citations`, `gap_to_next`, `time_note` — new. Existing `parseSummary` keeps working.
+
+**Criteria in `scores` (decided 2026-09-17):** the six from the 2026 form — `cause_effect, evaluate, prescription, desired_performances, biomechanics, equipment` — plus `section_averages: { ma, tu }` and `meets_standards: boolean`. The legacy keys `describe` and `communication` remain in `scores` for history and for `parseSummary`'s `hasFullScores` check (the evaluator still emits them, as diagnostic tags rather than exam lines; UI decides whether to show them). Additive: nothing removed.
 
 ## 9. Feedback loop — Chris scores blind
 
@@ -329,11 +349,14 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
 /api/chunks/search.js       NEW — debug endpoint: query → retrieved chunks (retrieval eval)
 /lib/store.js               NEW — Supabase client, chunk CRUD, similarity search
 /lib/embed.js               NEW — embedding client, single model, single dimension
+/lib/vocab.js               NEW — criteria, skills, phases, outcomes; one source for store, extract, evaluate
+/lib/score.js               NEW — extract → assemble → evaluate → normalize; shared by /api/score and the CLI
 /lib/assembler.js           NEW — §7
 /lib/prompts/extract.js     NEW — §8.1 template
 /lib/prompts/evaluate.js    NEW — §8.2 template
 /lib/prompts/zoom.js        NEW — §6.2 extraction template
 /scripts/bootstrap.mjs      NEW — one-time: pull Sheet data via /api/sheet, ingest all sources (§13 session 1)
+/scripts/score.mjs          NEW — CLI for the /api/score path; `--compare` checks within-one against a scorecard
 /scripts/retrieval-eval.mjs NEW — §14
 ```
 
@@ -377,7 +400,7 @@ One project, one sequence. Backend and frontend alternate so each session is one
 | **1** | Backend | Supabase project, §5.1 schema, `/lib/store.js`, `/lib/embed.js` (embedding model chosen and locked), `/scripts/bootstrap.mjs` — pulls from the Sheet via existing `/api/sheet` and ingests: `_REFERENCE_MATERIALS` → `psia_doc` (§6.1), `_MENTOR_ASSESSMENTS` → `mentor_assessment`, `mentorFeedback` + `mentorComments` → `chris_comment`, scored MASessions → `past_session` (runs Step 1 extraction on each); `/api/chunks/search.js` | Search returns sensible PSIA chunks for a test query about edging; a Chris comment and a past session appear for a query about the Ben MA. No manual export from the Sheet. |
 | **2** | Backend | `/lib/prompts/zoom.js`, `/api/ingest/zoom.js`, `/api/chunks/pending.js`, `/api/chunks/approve.js` | First real transcript in → pending chunks listed via endpoint with context and tags |
 | **3** | Frontend | New Vite + React app shell, login, tab nav, shared styles; **Sparring / AT Exam tab** with all 7 phases, speech (mic + speaker), localStorage persistence, save-to-MA-History | Mark runs a full AT Exam in the new app; session appears in the Sheet |
-| **4** | Backend | `/lib/prompts/extract.js`, `/lib/prompts/evaluate.js`, `/lib/assembler.js`, `/api/score.js` | Rescoring the Ben and Chuck sessions produces cited, per-criterion output in the §8.3 shape; scores are within-one of Mark's hand assessment |
+| **4** | Backend | `/lib/prompts/extract.js`, `/lib/prompts/evaluate.js`, `/lib/assembler.js`, `/api/score.js` | Rescoring the Ben (`bzfutxv`) and Chuck (`q5omsst`) sessions produces cited, per-criterion output in the §8.3 shape on the six 2026 criteria; **rescoring `7n6ry6d` with self-exclusion on lands within-one of Chris's 2026-09-17 scorecard (2/2/2 · 2/2/1) on all six lines.** (Amended 2026-09-17: Mark's hand assessments dropped — Chris's scorecard is the only real ground truth.) |
 | **5** | Frontend | **MA History tab** — session list, transcript with speaker colors, scores, rationale with citations (§12.2), comment thread, **blind scoring form** (§12.1), Rescore → `/api/score`, delete | Chris scores one session blind in the new app; AI score reveals after; delta shows |
 | **6** | Backend | `/api/ingest/score.js` (blind scores → `chris_score` + `exemplar`), `/api/ingest/comment.js`, agreement calculation, exemplar retrieval wired into assembler | Chris's three blind scores are retrievable as exemplars; a rescore cites one |
 | **7** | Frontend | **Journal tab** — six entry types, adaptive prompts, connection tags, theme tags, mentor depth assessment (change/deselect), comments, Challenge Me | Mark creates one entry of each type; Chris assesses depth; notification email fires |
@@ -427,28 +450,38 @@ Recorded so they aren't re-argued.
 | Preserve existing output shape | `parseSummary` and the UI depend on it. Add fields, never remove. |
 | New code in new files | The 5,000-line JSX is where tokens go. Don't extend it. |
 | New frontend, same interface, same data, tab by tab | Monolith is unmaintainable; shared Sheet means no migration and each tab is live on deploy. Chris switches after session 8. |
+| Scored criteria = Chris's 2026 form (six: cause_effect, evaluate, prescription, desired_performances, biomechanics, equipment); describe & communication become tag-only; report MA/TU section averages | The examiner's form is ground truth. Chris confirmed 2026-09-17 that the revised six-criterion form is the current standard. Scoring lines the exam doesn't score trains the wrong thing; not scoring Equipment and Desired Performances hides a third of the exam. Decided 2026-09-17. |
+| Evaluate ladder runs both directions; floor rules in the template | The original rules only guarded against scoring low. Chris's first scorecard (7n6ry6d) was 1–2 below the old scorer on every line. Decided 2026-09-17. |
+| A session never retrieves its own chunks | Otherwise Chris's comment on a session leaks into its rescore and agreement rate stops meaning agreement. |
+| Exemplar slot = Chris-scored only; `past_session` never shown as examples | Old-scorer numbers are known-biased; examples teach level. |
+| `general` Chris chunks ride in the Chris slot | They already skip the skill filter, and the slot under-fills for the foreseeable future. Revisit only if Zoom volume crowds it. |
 | Backend/frontend sessions alternate | Each session is one kind of work; review is easier; the scoring loop is live by session 6 without waiting for all tabs. |
 
 ## 16. Session log
 
 *(append one line per build session: date · session # · built · decided · deferred)*
 
+- **2026-09-17 · Session 4 (backend)** · Built: `lib/vocab.js`; `lib/prompts/extract.js` v2 (`connections[]` with per-link nulls and a never-repair-his-reasoning rule, `task`, `desired_performance`, `equipment.addressed`, `prescription.chain`, `comparison_to_intended_outcome`, code-computed `delivery_stats`; `extractionToText` substance-first); `lib/assembler.js` (§7 slots, PSIA 12K cap, self-exclusion, manifest); `lib/prompts/evaluate.js` (six 2026 lines, case-for-5/4/3 then 2/1, low- and high-guards, legacy diagnostics, 1.9K tok); `lib/score.js` (normalization: code-computed section averages/meets_standards, citation validation + `citation_details`, equipment guard); `api/score.js` (`sessionId` or inline `session`, read-only, `maxDuration` 300); `scripts/score.mjs`; `scripts/session4-migrate.mjs` (retag 2 form chunks; Chris's 9/17 comment split verbatim into 7 single-point chunks, whole-comment chunk superseded); `scripts/selftest-score.mjs` (offline, passing). `store.js` CRITERIA now includes `desired_performances`, `equipment` (were being silently dropped). · Decided: see four new §15 rows; done-when amended in §13. · Deferred: see §17. · **Live run 1 (v2-rag-1): FAIL.** 7n6ry6d scored 4/4/4 · 4/3/1 vs Chris 2/2/2 · 2/2/1 (four lines +2; Equipment and the overall result matched). Ben 4/4/4 · 4/4/1, Chuck 3/4/4 · 4/3/1. Diagnosis from `out/score-7n6ry6d.json`: both steps generous. Extract marked "X was caused by Y" as `how_stated`, put body consequences in the outcome slot, took the predicted benefit of the fix as the task's desired performance, and called a description of the observed turn a comparison to intent. Evaluate wrote "3: No case needed — the 4 case holds" on every line (started at 4, confirmed it), called a connection with null ski performance and outcome "complete", and related Mark's observation to the peer's intent itself. · **Fix (extract v3 / evaluate v2-rag-2):** each generous field now defined by what it is not; no stitching across sections; `cause_effect_chain` rendered in code from `connections[]`; code-computed `connection_stats` and `connections[].complete`; evaluator gets a defined unit of evidence per line, a scale that counts complete units, a bottom-up ladder with every rung written (`quality.ladder_skipped` flags violations), and an explicit AT bar (L3-grade analysis is the starting point, not a 3/4 — sourced from Chris's scorecard, overridden by exemplars when they exist). Template slot 2K → 3K. `lib/sheet.js` retries 4 → 6. · Caveat logged: this is calibration against one scorecard. Live run 2 pending.
+- **2026-09-17 · Decision** · Chris confirmed the 2026 six-criterion form is the current standard. §5.3, §8.3, §15 updated; follow-through listed in §17. Template-version form chunks (`at-ma-tu-assessment-form.md`, 12) to be superseded by the 2026 version (`at-ma-tu-assessment-form-2026.md`).
+- **2026-09-17 · Session 1 addendum 2 — first real Chris input** · Chris scored session `ma_7n6ry6d` on the official form and commented in the tracker himself; comment ingested as `chris_comment` (`author: chris`, store now 3). His scores posted by Mark as a structured comment line for session 6 to parse. · Finding: the form Chris used is a **2026 revision with six MA/TU criteria** — MA: Cause and Effect, Evaluate, Prescription; TU: Understanding of Desired Performances, Understanding of Biomechanics/Physics, Equipment. Describe and Communication are no longer scored lines; revised learning outcomes. Ingested as `reference/at-ma-tu-assessment-form-2026.md` (9 chunks, deterministic). The 11-criterion template version remains live until Chris confirms which form is current; then supersede the other. · His comments define AT-level MA in his words (X→Y→Z frame tied to the task; peer piece = "coaching cue plus", a few sentences; equipment–biomechanics–desired-performance trio; "the how in depth"). Session 4's evaluate prompt should be built around them. · Fixes: `lib/sheet.js` now retries transient Apps Script "Unknown action" failures.
 - **2026-09-11 · Session 1 addendum** · Official AT MA/TU Assessment Form obtained and ingested as `reference/at-ma-tu-assessment-form.md` — 12 `psia_doc` chunks (scale + section rule, one per criterion with section Learning Outcome), parsed deterministically, no model call. The 12 summarized scorecard chunks from `psia.md` marked `superseded_by` the form's scale chunk via new `scripts/supersede.mjs`. · Incident: first ingest used the generic Sonnet prose chunker with a guidance hint listing criterion names; Sonnet produced 36 chunks, most manufactured from the hint, including an invented 1–4 rating scale. All 36 hard-deleted (`scripts/cleanup-form.mjs`), old chunks restored, re-ingested cleanly. · Fixes: (a) `groundedness()` guard in `lib/ingest/psia.js` — every Sonnet-produced chunk is rejected unless ≥60% of its sentences appear in the source text; (b) chunker prompt now states guidance is never source; (c) small regular documents get deterministic parsers, not the model. · Note: the summarized scorecard already listed all eleven criteria — the six-criteria scorer was an original app design choice, not a reference gap. Decision on expanding the taxonomy logged in §17.
 - **2026-09-10 · Session 1 (backend)** · Built: `supabase/schema.sql` (§5.1 + `match_chunks` RPC with §7.3 hard filters, `text_hash` unique index for idempotent ingest), `scripts/migrate.mjs`, `lib/embed.js` (Voyage `voyage-3`, 1024-d, locked), `lib/store.js`, `lib/llm.js`, `lib/parseSummary.js` (harvested from old JSX), `lib/sheet.js` (harvested column guards incl. `b`-for-`id` header), `lib/prompts/extract.js` (§8.1), `lib/ingest/psia.js` (§6.1 chunker), `scripts/bootstrap.mjs`, `scripts/search.mjs`, `api/chunks/search.js`; `reference/` with five source files. · Decided: (a) reference material is ingested from `/reference/*.md` checked into the repo, not from `Config._REFERENCE_MATERIALS` — that Sheet row is empty and the ~47K of PSIA text was a hardcoded default in the JSX; (b) `extract.js` built in session 1 (spec said session 4) because `past_session` ingestion needs it; session 4 refines; (c) original PDFs replace the summarized IDP section (excluded from `psia.md`; full IDP = 44 task chunks, one per activity); (d) Performance Guide L1–3 criteria ingested with `l3_vs_at` on L3 chunks as the baseline AT is compared against; (e) `private_notes`/`root_cause` exam sections fed to Step 1 as observation-only, never as communication. · Deferred: AT MA/TU Assessment Form (see §17); done-when verified 2026-09-11: store 157/1/2/6 (psia_doc/mentor_assessment/chris_comment/past_session; `ma-sample-2/3` seed sessions superseded via `EXCLUDE_SESSIONS`); retrieval checks pass; `POST /api/chunks/search` live on the new production site. · Environment: new repo `markanderson71/RM-AT-Developer`, new Vercel project `rm-at-developer` (https://rm-at-developer.vercel.app); old site left untouched, same Sheet. `past_session` embedded text is the extraction only — scores were moved out of the text after the first retrieval check showed they compressed all sessions into one similarity band.
 
 ## 17. Deferred / open
 
-- **Criteria taxonomy vs the real form — DECISION PENDING (Mark).** The official AT MA/TU Assessment Form scores nine MA/TU criteria (MA: Describe Performance, Cause and Effect, Evaluate, Prescription, Equipment; TU: Understanding of Desired Performances, Understanding of Biomechanics/Physics, Utilizes Resources, Communication) plus two continually-assessed Instructor Decisions & Behavior items, with a per-section average ≥ 4 pass rule. The app scores six (§5.3, §8.3). Equipment, Understanding of Desired Performances, and Utilizes Resources are unscored. Options: (1) expand to nine — taxonomy + reference tags now, scorer output in session 4, Sheet columns + Chris's UI in session 6, report MA/TU section averages; (2) keep six; (3) scorer-only expansion. Recommendation: 1. Blocks the §8.3 shape for session 4.
+- **Taxonomy change follow-through** (decision in §15, 2026-09-17): ~~session 4 evaluate template and `justifications`/`gap_to_next` keyed on the six~~ (done); session 5 MA History shows the six + section averages + Meets/Does Not Meet; session 6 Chris's scoring form is the 2026 form layout (incl. Needs/Safety, Behavior Management as optional); Sheet `summary` JSON gets `section_averages` and `meets_standards`. ~~`EXTRACT_SYSTEM` in `lib/prompts/extract.js` should add explicit inventory items~~ (done, extract v2): `equipment: { addressed: bool, quote, linked_to_biomechanics: bool, linked_to_desired_performance: bool }` and `desired_performance: { stated: bool, quote, fundamentals_blended: [...] }` — Chris's 9/17 Equipment score of 1 meant "not addressed at all"; the evaluator must see absence explicitly, not infer it. Chris's trio (equipment × biomechanics × desired performance, with a worked causal example) is the target shape for that line. Re-tag existing chunks: nothing required — tags are additive; `equipment` skill tag already exists.
 - **MASessions header cell A1 reads `b` instead of `id`** in the live Sheet export. `lib/sheet.js` guards for it; fix the header in the Sheet when convenient.
-- **`extract.js` and `evaluate.js` vocabulary alignment** — session 4 must reuse the skill tags and phase names from `extract.js` verbatim in the evaluate template.
-- **`extractionToText` ordering.** Every `past_session` chunk opens with `MA type / Primary fundamental / Skills` boilerplate, which still narrows the similarity band (0.31–0.38 on the retrieval check). Session 4: lead with `verbatim_key_phrases` and observations, push the tag lines to the end.
 - **`/api/chunks/search` returns full `metadata`** including the stored extraction and AI rationale — fine for debug, but session 8's review UI should request a trimmed shape.
 - **ivfflat index built on an empty table** (`lists = 50`). If recall looks off after bootstrap, `reindex index chunks_embedding_idx`.
 - Fine-tuning: revisit with 50+ blind scores if agreement plateaus below target.
 - Retiring in-prompt reference material from the old `buildScorerPrompt`: after session 3 proves retrieval; keep old path as fallback until then.
 - Progress tab trend analysis redesign to use exemplars and agreement data.
 - Gates and Mike as blind scorers: same form, `author` tag differs; inter-rater data between mentors is a bonus.
-- Whether `general` criterion chunks from Chris (principles that apply to all criteria) need their own slot in the assembler or ride in the Chris slot. Decide in session 3.
+- **Session 6:** Chris's 7n6ry6d scorecard (posted by Mark as a structured comment line) is exemplar #1 — `result.extraction` from `/api/score` is the text half. `/api/ingest/comment.js` should split long mentor comments by paragraph the way `session4-migrate.mjs` did by hand. After a score is saved, write/refresh the `past_session` chunk (§6.7 "continuous") — `/api/score` is read-only by design.
+- **Session 5:** `parseAIJson` strategy 2 (regex fallback) rebuilds `score_rationale` for the legacy six keys only; extend to the 2026 keys when the tab is built. Sheet `summary` should store the full `/api/score` result minus `debug`.
+- **Existing `past_session` chunks are extraction v1.** Not used by the evaluator, so no re-bootstrap required; re-extract when session 6 builds exemplars so they carry `connections[]` and `equipment`.
+- **Chris–Chris conflict detection** (§5.6 last rule) is done by the evaluator, which sees dates and reports `chris_conflicts`; the assembler can't detect contradiction without a model call. If conflicts start appearing, add a review list to session 8's approval view.
+- **Chris slot minimum of 5** (§7.1) is met only when the scored session isn't 7n6ry6d (7 split chunks + 2 comments + assessment). `meta.context.chris_under_min` reports it. Zoom chunks fix this.
 
 ## Appendix A — Glossary for the builder
 
