@@ -10,7 +10,7 @@ import { ingestZoom } from '../lib/ingest/zoom.js';
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
-const OPTS = ['--date', '--map', '--title', '--mentor', '--pending', '--sessions'];   // --sessions '[{"from":"00:00:00","to":"00:24:30","id":"ma_7uk7lnh","label":"Fall Line Bumps"}]'
+const OPTS = ['--date', '--map', '--title', '--mentor', '--pending', '--sessions', '--exclude', '--passes'];   // --sessions '[{"from":"00:00:00","to":"00:24:30","id":"ma_7uk7lnh","label":"Fall Line Bumps"}]'
 const file = args.find((a, i) => !a.startsWith('--') && !OPTS.includes(args[i - 1]));
 
 const line = (c, m = c.metadata || c) => `  ${m.timestamp}  ${c.type.padEnd(12)} ${[...c.criteria, ...c.skills.map((s) => `#${s}`)].join(' ')}${m.hedged ? '  [HEDGED]' : ''}${(m.attribution?.check ?? c.attribution_check) ? '  [CHECK SPEAKER]' : ''}${(m.watch || []).length ? `  [§17 ${m.watch.join(',')}]` : ''}\n    ${c.text}\n    ctx: ${m.context}\n`;
@@ -24,7 +24,7 @@ if (flag('--pending')) {
 if (!file || !opt('--date')) { console.error('usage: npm run zoom -- <transcript.txt> --date YYYY-MM-DD [--map "Speaker 1=chris,Speaker 2=mark"] [--title "…"] [--dry] [--replace]'); process.exit(1); }
 
 const speakerMap = opt('--map') ? Object.fromEntries(opt('--map').split(',').map((p) => p.split('=').map((x) => x.trim()))) : null;
-const r = await ingestZoom({ transcript: readFileSync(file, 'utf8'), date: opt('--date'), title: opt('--title'), mentor: opt('--mentor') || 'chris', speakerMap, sessions: opt('--sessions') ? JSON.parse(opt('--sessions')) : [], dryRun: flag('--dry'), replacePending: flag('--replace'), onStep: (m) => console.log(`  … ${m}`) });
+const r = await ingestZoom({ transcript: readFileSync(file, 'utf8'), date: opt('--date'), title: opt('--title'), mentor: opt('--mentor') || 'chris', speakerMap, sessions: opt('--sessions') ? JSON.parse(opt('--sessions')) : [], exclude: opt('--exclude') ? JSON.parse(opt('--exclude')) : [], passes: Number(opt('--passes') || 2), dryRun: flag('--dry'), replacePending: flag('--replace'), onStep: (m) => console.log(`  … ${m}`) });
 
 if (r.needs) {
   console.log(`${r.turns} turns · ${r.chars} chars · ${r.duration}\n`);

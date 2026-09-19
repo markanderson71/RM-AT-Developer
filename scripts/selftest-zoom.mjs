@@ -1,7 +1,7 @@
 // Offline checks for the Zoom pipeline. No network, no keys.  npm run test:zoom [transcript.txt]
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { normalizeSessions, sessionAt, parseTranscript, speakerReport, windows, quoteGrounded, textOverlap, toChunks, dedupe, ingestZoom } from '../lib/ingest/zoom.js';
+import { scoreLinesUnheard, normalizeSessions, sessionAt, parseTranscript, speakerReport, windows, quoteGrounded, textOverlap, toChunks, dedupe, ingestZoom } from '../lib/ingest/zoom.js';
 import { zoomSystem, zoomUser } from '../lib/prompts/zoom.js';
 import { supersessionCandidates, canSupersede, normalizeChunk } from '../lib/store.js';
 
@@ -69,6 +69,22 @@ const ses = normalizeSessions([{ from: '00:00:00', to: '00:24:30', id: 'ma_7uk7l
 assert.equal(sessionAt(5, ses).id, '7uk7lnh'); assert.equal(sessionAt(1500, ses), null); assert.throws(() => normalizeSessions([{ id: 'x', from: 'soon', to: '1:00' }]));
 const tagged = await ingestZoom({ transcript: raw, date: '2026-09-18', speakerMap: map, replacePending: true, sessions: [{ from: '00:00', to: '00:30', id: 'ma_SELF' }] }, { store, completeJson });
 assert.equal(calls.inserted[0].metadata.session_id, 'SELF', 'chunk inside a session range carries session_id for self-exclusion'); assert.equal(tagged.about_sessions[0].chunks, 1);
+
+// Score guard: a line Chris never said cannot appear in a scores item; asr_fixes don't launder it.
+const heard = 'So MA two three two cost and effect to evaluate re prescription. Two cost. Two cause and effect. Two evaluate. Three prescription.';
+assert.deepEqual(scoreLinesUnheard('Scores for Fall Line Bumps: MA Describe 2, Cause and Effect 2, Evaluate 2, Prescription 3.', heard), ['describe']);
+assert.deepEqual(scoreLinesUnheard('Scores for Fall Line Bumps: Cause and Effect 2, Evaluate 2, Prescription 3.', heard), []);
+assert.deepEqual(scoreLinesUnheard('You need to describe the turn shape better.', heard), [], 'only score items are checked');
+// Two passes are unioned; an item only the second pass found survives; excluded ranges drop out.
+let call = 0;
+const twoPass = async ({ user }) => { call++; if (!user.includes('part 1 of')) return { statements: [] };
+  return call <= wins.length ? { statements: [S({ text: a.text, quote: a.metadata.quote })] }
+    : { statements: [S({ text: `${a.text} Right.`, quote: a.metadata.quote }), S({ turns: [3], timestamp: '00:01:30', text: b.text, quote: b.metadata.quote, type: 'correction' })] }; };
+const u = await ingestZoom({ transcript: raw, date: '2026-09-18', speakerMap: map, dryRun: true }, { store, completeJson: twoPass });
+assert.equal(u.would_insert, 2); assert.equal(u.only_in_later_pass, 1); assert.equal(u.chunks[0].text, a.text, 'first pass wording wins');
+call = 0;
+const ex = await ingestZoom({ transcript: raw, date: '2026-09-18', speakerMap: map, dryRun: true, exclude: [{ from: '00:01:00', to: '00:02:00', reason: 'off-topic' }] }, { store, completeJson: twoPass });
+assert.equal(ex.would_insert, 1); assert.equal(ex.excluded.length, 1);
 
 // §5.6
 const old = (n, o) => ({ id: `old-${n}`, author: 'chris', approved: true, date: '2026-09-17', source: 'chris_comment', source_ref: 'session:x', criteria: ['general'], skills: [], type: 'principle', text: 't', ...o });
