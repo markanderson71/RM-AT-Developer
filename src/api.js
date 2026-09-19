@@ -168,7 +168,22 @@ export async function appendFeedback(sessionId, item) {
   if (!merged.some((f) => fbKey(f) === fbKey(item))) merged.push(item);
   merged.sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
   const ok = await updateMaColumns(bare, { mentorFeedback: JSON.stringify(merged) });
+  if (ok) feedKnowledge(bare, item);
   return { ok, mentorFeedback: merged };
+}
+
+/**
+ * §6.3 / §6.4 — after the Sheet has the item, tell the knowledge store. Fire-and-forget: the Sheet is the record, the
+ * server re-reads the item from it, and `npm run ingest:scores` picks up anything missed — so a failure here never
+ * blocks or fails the post. One retry, because Apps Script can take a moment to show a row it has just written (409).
+ */
+function feedKnowledge(bare, item) {
+  const who = String(item?.userId || "").toLowerCase();
+  if (!["chris", "gates", "mike"].includes(who)) return;
+  const call = item.kind === "blind_score"
+    ? () => postJson("/api/ingest/score", { sessionId: bare, mentor: who })
+    : () => postJson("/api/ingest/comment", { sessionId: bare, timestamp: item.timestamp });
+  call().catch(() => new Promise((r) => setTimeout(r, 4000)).then(call)).catch((e) => console.warn("knowledge ingest deferred:", e?.message || e));
 }
 export const deleteMaSession = (sessionId) => apiDelete("MASessions", `ma_${String(sessionId).replace(/^ma_/, "")}`);
 

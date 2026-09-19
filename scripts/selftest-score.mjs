@@ -18,7 +18,7 @@ const psia = Array.from({ length: 40 }, (_, i) => mk(200 + i, { text: 'p '.repea
 const calls = [];
 const store = {
   getBySourceRefPrefix: async () => defs,
-  searchByEmbedding: async (_e, o) => { calls.push(o); assert.notEqual(o.includeUnapproved, true); if (o.authors) return chris; if (o.types) return []; return [...psia, defs[3]]; },
+  searchByEmbedding: async (_e, o) => { calls.push(o); assert.notEqual(o.includeUnapproved, true); if (o.sources?.includes('chris_score') && o.types?.length === 1) return []; if (o.authors) return chris; return [...psia, defs[3]]; },
 };
 const x = { ma_type: 'at_exam', skills_referenced: ['edging', 'bogus'], observations: [], verbatim_key_phrases: ['tails break away'], equipment: { addressed: false } };
 
@@ -32,6 +32,7 @@ assert.ok(a.manifest.counts.psia > 0 && a.manifest.counts.psia < 40);
 assert.ok(!Object.values(a.manifest.chunks).some((c) => c.slot === 'psia' && c.source_ref.startsWith('at-ma-tu')), 'definitions not duplicated in psia slot');
 assert.deepEqual(calls.find((c) => c.sources?.includes('psia_doc')).skills, ['edging'], 'skill filter uses valid tags only');
 assert.equal(calls.find((c) => c.authors)?.skills, undefined, 'Chris slot skips the skill filter');
+assert.ok(!calls.find((c) => c.sources?.includes('mentor_assessment')).types.includes('exemplar'), 'exemplars are excluded from the Chris slot in the query');
 assert.ok(calls.findIndex((c) => c.authors) < calls.findIndex((c) => c.sources?.includes('psia_doc')), 'Chris slot filled before PSIA');
 assert.ok(a.context.indexOf('CHRIS') < a.context.indexOf('PSIA REFERENCE'));
 const b = await assemble(x, { sessionId: 'SELF', includeSelf: true, deps: { embedQuery: async () => [0], store } });
