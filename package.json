@@ -16,6 +16,7 @@
     "session4:migrate": "node scripts/session4-migrate.mjs",
     "test:score": "node scripts/selftest-score.mjs",
     "test:exam": "node scripts/selftest-exam.mjs",
+    "test:history": "node scripts/selftest-history.mjs",
     "zoom": "node scripts/zoom.mjs",
     "test:zoom": "node scripts/selftest-zoom.mjs"
   },

@@ -143,3 +143,36 @@ export async function saveMaSession(session) {
   if (await apiUpdate("MASessions", row)) return true;
   return apiCreate("MASessions", row);
 }
+
+// ── MA History writes (session 5) ─────────────────────────────────────────────
+// The Apps Script `update` writes only the columns it is given. Every MA History write sends ONE column, so a comment
+// from Chris can never overwrite a summary Mark just rescored, and a rescore can never drop a comment.
+async function updateMaColumns(sessionId, cols) {
+  const id = `ma_${String(sessionId).replace(/^ma_/, "")}`;
+  return apiUpdate("MASessions", { id, b: id, ...cols });
+}
+export const saveMaSummary = (sessionId, summaryObj) => updateMaColumns(sessionId, { summary: JSON.stringify(summaryObj) });
+
+const fbKey = (f) => `${f.userId}|${f.timestamp}|${(f.text || "").slice(0, 40)}`;
+/**
+ * Append to a session's comment thread. Re-reads the row first and merges, so two people commenting from stale
+ * copies both keep their comments (the old app saved the whole row from memory — last writer won).
+ * → { ok, mentorFeedback } with the merged thread.
+ */
+export async function appendFeedback(sessionId, item) {
+  const bare = String(sessionId).replace(/^ma_/, "");
+  const rows = await apiGet("MASessions");
+  const live = rows.map(normalizeMaRow).filter(Boolean).find((s) => s.id === bare);
+  if (!live && sheetHealth.failed.has("MASessions")) return { ok: false, mentorFeedback: null };
+  const merged = [...(live?.mentorFeedback || [])];
+  if (!merged.some((f) => fbKey(f) === fbKey(item))) merged.push(item);
+  merged.sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
+  const ok = await updateMaColumns(bare, { mentorFeedback: JSON.stringify(merged) });
+  return { ok, mentorFeedback: merged };
+}
+export const deleteMaSession = (sessionId) => apiDelete("MASessions", `ma_${String(sessionId).replace(/^ma_/, "")}`);
+
+/** "Try that line again": one passage, one line (§13 row 5). Read-only on the server. */
+export const scoreLineTry = ({ session, extraction, line, section, passage, original }) =>
+  postJson("/api/score/evaluate", { lines: [line], extraction, section, passage, original: original || null, sessionId: session.id || undefined,
+    session: { type: session.type, context: session.context, who: session.who, activity: session.activity, conditions: session.conditions, sections: session.sections, transcript: Object.keys(session.sections || {}).length ? undefined : session.transcript } });

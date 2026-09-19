@@ -4,11 +4,15 @@ import { Button, Composer, Field, Hint, Input, Select, Textarea, Thread, speakTe
 import { callClaude, saveMaSession, scoreExtract, scoreEvaluate } from "../api.js";
 import { USERS, today } from "../lib/users.js";
 import { parseAIJson, parseSummary } from "../lib/parseSummary.js";
-import { PHASES, PHASE_LABEL, SECTIONS, CRITERIA, DIAGNOSTICS, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, sectionAverages, isLegacyAttempt, attemptTotal, bestAttempt, YT_RE } from "../lib/exam.js";
+import { PHASES, PHASE_LABEL, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, YT_RE } from "../lib/exam.js";
+import { scorecard, resultCard, bestAttempt, LINE_LABEL } from "../lib/scorecard.js";
+import { briefLines } from "../../lib/coaching.js";
+import { byDateDesc } from "../api.js";
+import { ScoreChips, ScoreGrid, MeetsBadge, LegacyNotice, Diagnostics, Block, scoreColor } from "../components/ScoreViews.jsx";
+import Rationale from "./Rationale.jsx";
 import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock, buildScorerSystem, buildScoreInput } from "../lib/prompts.js";
 
 const TONE = C.exam;
-const scoreColor = (v) => (v >= 4 ? C.green : v >= 3 ? C.orange : C.red);
 const AUTOSPEAK_KEY = "rmat_autospeak";
 
 /**
@@ -142,6 +146,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
       {/* 1 · Setup */}
       {exam.phase === "setup" && (
         <>
+          <PreExamBrief maSessions={maSessions} />
           <Field label="Video link"><Input value={exam.videoUrl} onChange={(e) => upd({ videoUrl: e.target.value })} placeholder="YouTube or Google Drive link to the skiing you'll analyze" /></Field>
           {exam.videoUrl && <Field label="Video time range"><Input value={exam.videoTime} onChange={(e) => upd({ videoTime: e.target.value })} placeholder="e.g., 0:32 - 1:15" /></Field>}
           {ytId && <a href={exam.videoUrl} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 8 }}><img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", maxWidth: 320, borderRadius: 8 }} /></a>}
@@ -253,72 +258,58 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
   );
 }
 
+/**
+ * Pre-exam brief (§13 row 5c): three lines to carry in, from the last session scored on the 2026 form.
+ * Ranked by Chris's scorecard where he has given one, else the AI's. Read through scorecard() like everything else.
+ */
+function PreExamBrief({ maSessions }) {
+  const last = [...(maSessions || [])].sort(byDateDesc).map((s) => ({ s, card: scorecard(s) })).find(({ card }) => card.status === "scored" && card.form === "2026" && card.detail?.gap_to_next);
+  if (!last) return null;
+  const chris = last.card.mentors?.chris;
+  const rank = chris ? chris.scores : Object.fromEntries(last.card.lines.map((l) => [l.key, l.score]));
+  const lines = briefLines(last.card.detail, rank, 3);
+  if (!lines.length) return null;
+  return (
+    <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: "rgba(232,160,80,0.05)", border: "1px solid rgba(232,160,80,0.18)" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, marginBottom: 2 }}>Carry these in — from {last.s.date} · {last.s.activity || "last session"}</div>
+      <Hint style={{ marginBottom: 6 }}>Your three lowest lines {chris ? "on Chris's scorecard" : "(AI score)"}. The moves are AI suggestions.</Hint>
+      {lines.map((l) => (
+        <details key={l.key} style={{ marginBottom: 4 }}>
+          <summary style={{ fontSize: 13, color: C.body, cursor: "pointer", lineHeight: 1.5 }}><b style={{ color: scoreColor(l.score) }}>{LINE_LABEL[l.key]} ({l.score})</b> — {l.gap.because ? l.gap.because[0].toUpperCase() + l.gap.because.slice(1) : l.gap.raw.slice(0, 180)}.</summary>
+          {l.gap.say && <div style={{ fontSize: 12, color: C.muted, margin: "3px 0 4px 14px", lineHeight: 1.5 }}>Last time, instead of “{l.gap.instead}”, the suggestion was: “{l.gap.say}”</div>}
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function Scored({ exam, saveState, onRevise, onSave, onNew }) {
   const current = exam.attempts[exam.attempts.length - 1];
   const best = bestAttempt(exam.attempts);
+  const card = resultCard(current?.scores ? current : null);      // same card MA History will show once this is saved
   const canRevise = exam.attempts.length <= MAX_REVISIONS;
   const didWell = current?.did_well || current?.strengths || [];
   const opp = current?.opportunity || current?.gaps || [];
-  const legacy = isLegacyAttempt(current);
-  const avgs = current?.scores ? sectionAverages(current) : null;
-  const meets = avgs && !legacy ? avgs.ma >= 4 && avgs.tu >= 4 : null;
-  const cite = (k) => (current?.citations?.[k] || []).map((id) => current.citation_details?.[id]).filter(Boolean);
-  const who = (c) => `${c.author === "psia" ? "PSIA" : c.author ? c.author[0].toUpperCase() + c.author.slice(1) : c.source}${c.date ? `, ${c.date}` : ""}`;
   return (
     <div style={{ padding: 14, borderRadius: 8, background: `${TONE}0a`, border: `1px solid ${TONE}1a` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: TONE }}>{exam.attempts.length <= 1 ? "Initial score" : `Revision ${exam.attempts.length - 1} of ${MAX_REVISIONS}`} · {today()}</div>
-        {meets != null && <div style={{ fontSize: 12, fontWeight: 800, padding: "3px 10px", borderRadius: 5, color: meets ? C.green : C.red, background: `${meets ? C.green : C.red}14`, border: `1px solid ${meets ? C.green : C.red}40` }}>{meets ? "Meets Standards" : "Does Not Meet Standards"}</div>}
+        <MeetsBadge meets={card.meets} />
       </div>
 
-      {legacy && current?.scores && (
-        <Hint style={{ color: C.orange, marginBottom: 10, lineHeight: 1.5 }}>
-          ⚠ Scored by the OLD scorer — the new one was unavailable{current.scorer_error ? ` (${current.scorer_error})` : ""}. These are the pre-2026 lines and have run 1–2 points high against Chris. No Equipment or Desired Performances line, no pass/fail. Revise-and-score again to retry the new scorer.
-        </Hint>
-      )}
+      {card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Revise-and-score again to retry it.</Hint>}
+      <LegacyNotice card={card} />
 
-      {current?.scores ? (
+      {card.status === "scored" ? (
         <>
-          {SECTIONS.map((sec) => (
-            <div key={sec.key} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{sec.label}</div>
-                {!legacy && <div style={{ fontSize: 11, color: C.muted }}>section average <span style={{ fontWeight: 800, color: scoreColor(avgs[sec.key]) }}>{avgs[sec.key].toFixed(2)}</span> <span style={{ color: C.faint }}>/ 4 to pass</span></div>}
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {sec.lines.map((c) => (
-                  <div key={c.key} style={{ textAlign: "center", minWidth: 92, flex: 1, padding: "6px 4px", borderRadius: 6, background: "rgba(255,255,255,0.02)" }}>
-                    <div style={{ fontSize: 22, fontWeight: 800, color: current.scores[c.key] ? scoreColor(current.scores[c.key]) : C.faint }}>{current.scores[c.key] || "—"}</div>
-                    <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{c.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-          <div style={{ fontSize: 11, color: C.dim, marginBottom: 10 }}>
-            Diagnostics (not on the 2026 form): {DIAGNOSTICS.map((d) => `${d.label} ${current.scores[d.key] ?? "—"}`).join(" · ")}
-          </div>
-
+          <ScoreGrid card={card} />
+          <Diagnostics card={card} />
           {current.key_learning && <Block tone={C.amber} label="Key focus">{current.key_learning}</Block>}
           {didWell.length > 0 && <Block tone={C.green} label="What you did well">{didWell.join(" · ")}</Block>}
           {opp.length > 0 && <Block tone={C.orange} label="Opportunity">{opp.join(" · ")}</Block>}
           {current.time_note && <Block tone={C.blue} label="Delivery">{current.time_note}</Block>}
-
-          {current.score_rationale && (
-            <details style={{ margin: "8px 0" }} open={!legacy}>
-              <summary style={{ fontSize: 11, color: C.muted, cursor: "pointer" }}>Why each score · what moves it up</summary>
-              <div style={{ padding: "6px 8px", borderRadius: 4, background: "rgba(255,255,255,0.02)", marginTop: 4 }}>
-                {[...CRITERIA, ...(legacy ? DIAGNOSTICS : [])].map((c) => current.score_rationale[c.key] && (
-                  <div key={c.key} style={{ marginBottom: 10, fontSize: 12, lineHeight: 1.5 }}>
-                    <div><span style={{ fontWeight: 700, color: scoreColor(current.scores[c.key] || 0) }}>{c.label} ({current.scores[c.key]}): </span><span style={{ color: "#b0b8c0" }}>{current.score_rationale[c.key]}</span></div>
-                    {current.evidence_count?.[c.key] && <div style={{ color: C.dim, marginTop: 2 }}>Evidence — {current.evidence_count[c.key]}</div>}
-                    {current.gap_to_next?.[c.key] && <div style={{ color: C.amber, marginTop: 2 }}>→ {current.gap_to_next[c.key]}</div>}
-                    {cite(c.key).length > 0 && <div style={{ color: C.dim, marginTop: 2, fontSize: 11 }}>Based on: {cite(c.key).map((d, i) => <span key={i} title={d.text} style={{ marginRight: 8, color: d.author === "chris" ? C.examiner : C.dim, cursor: "help" }}>{who(d)}{d.title ? ` — ${d.title}` : ""}</span>)}</div>}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+          <Rationale card={card} open={card.form === "2026"} />
+          {card.form === "2026" && <Hint style={{ marginBottom: 6 }}>Save this, then open it in MA History for line-by-line coaching and “try that line again”.</Hint>}
         </>
       ) : (
         <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(255,255,255,0.02)", marginBottom: 10 }}>
@@ -329,14 +320,12 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
 
       {exam.attempts.length > 1 && (
         <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>All attempts <span style={{ fontWeight: 400, color: C.dim }}>· CE Ev Rx | DP Bio Eq</span></div>
-          {exam.attempts.map((a, i) => { const v = a.scores ? sectionAverages(a) : null; return (
-            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", padding: "4px 0", borderBottom: "0.5px solid rgba(255,255,255,0.03)", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>All attempts <span style={{ fontWeight: 400, color: C.dim }}>· ★ = best (MA avg + TU avg) — the one saved as this session's score</span></div>
+          {exam.attempts.map((a, i) => { const c = resultCard(a.scores ? a : null); return (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", borderBottom: "0.5px solid rgba(255,255,255,0.03)", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: a === best ? C.green : C.muted, minWidth: 75 }}>{a === best ? "★ " : ""}{i === 0 ? "Initial" : `Rev ${i}`}</span>
-              <div style={{ display: "flex", gap: 3 }}>
-                {CRITERIA.map((c, j) => { const s = a.scores?.[c.key] || 0; return <div key={c.key} style={{ width: 22, height: 22, marginLeft: j === 3 ? 6 : 0, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: s ? scoreColor(s) : C.faint, background: `${scoreColor(s)}12`, border: `1px solid ${scoreColor(s)}30` }}>{s || "—"}</div>; })}
-              </div>
-              {v && <span style={{ fontSize: 11, color: C.dim }}>MA {v.ma.toFixed(2)} · TU {v.tu.toFixed(2)}{isLegacyAttempt(a) ? " · old scorer" : ""}</span>}
+              <ScoreChips card={c} />
+              <span style={{ fontSize: 11, color: C.dim }}>{c.form === "2026" && c.sections.ma != null ? `MA ${c.sections.ma.toFixed(2)} · TU ${c.sections.tu.toFixed(2)}` : c.form === "legacy" ? "old scorer — not comparable" : "not scored"}</span>
             </div>
           ); })}
         </div>
@@ -354,10 +343,3 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
     </div>
   );
 }
-
-const Block = ({ tone, label, children }) => (
-  <div style={{ marginBottom: 6, padding: "6px 8px", borderRadius: 4, background: `${tone}0f`, border: `1px solid ${tone}1f` }}>
-    <span style={{ fontSize: 10, fontWeight: 700, color: tone, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}: </span>
-    <span style={{ fontSize: 12, color: C.body }}>{children}</span>
-  </div>
-);

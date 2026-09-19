@@ -4,6 +4,8 @@ import { ATIcon, Card } from "./components/index.jsx";
 import { USERS } from "./lib/users.js";
 import { loadConfig, loadMaSessions, sheetHealth } from "./api.js";
 import Sparring from "./tabs/Sparring.jsx";
+import MAHistory from "./tabs/MAHistory.jsx";
+import { sealSessions } from "./lib/scorecard.js";
 import referenceText from "../reference/psia.md?raw";
 
 const OLD_APP = "https://at-dev-tracker.vercel.app";
@@ -11,6 +13,7 @@ const OLD_APP = "https://at-dev-tracker.vercel.app";
 // Tabs land here one session at a time (§13). Until then, the link to the old app covers the rest.
 const TABS = [
   { id: "sparring", label: "Sparring Partner", roles: ["candidate"] },
+  { id: "mahistory", label: "MA History", roles: ["candidate", "mentor"] },
 ];
 
 const Shell = ({ children, center }) => (
@@ -51,7 +54,8 @@ export default function App() {
     (async () => {
       const [maSessions, config] = await Promise.all([loadMaSessions(), loadConfig()]);
       if (!alive) return;
-      setData({ loaded: true, error: sheetHealth.failed.has("MASessions") || sheetHealth.failed.has("Config"), maSessions, config });
+      // Blind scoring (§9): for a mentor, AI summaries of sessions he hasn't scored never enter React state.
+      setData({ loaded: true, error: sheetHealth.failed.has("MASessions") || sheetHealth.failed.has("Config"), maSessions: sealSessions(maSessions, user), config });
     })();
     return () => { alive = false; };
   }, [user, loadTick]);
@@ -71,7 +75,7 @@ export default function App() {
               <div><div style={{ fontSize: 15, fontWeight: 700, color: C.body }}>{u.name}</div><div style={{ fontSize: 12, color: C.muted }}>{u.role === "candidate" ? "Candidate" : "Mentor / Assessor"}</div></div>
             </button>
           ))}
-          {pending && <PinInput user={USERS[pending]} onOk={() => { setUser({ key: pending, ...USERS[pending] }); setPending(null); }} onBack={() => setPending(null)} />}
+          {pending && <PinInput user={USERS[pending]} onOk={() => { setUser({ key: pending, ...USERS[pending] }); setTab(USERS[pending].role === "mentor" ? "mahistory" : "sparring"); setPending(null); }} onBack={() => setPending(null)} />}
         </div>
       </Shell>
     );
@@ -98,11 +102,11 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
             {visibleTabs.map((t) => (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}</button>
+              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}{t.id === "mahistory" && data.maSessions.length ? ` (${data.maSessions.length})` : ""}</button>
             ))}
             <a href={OLD_APP} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12, color: C.dim, textDecoration: "none" }}>Everything else is on the old app ↗</a>
           </div>
-          {!data.loaded && <div style={{ margin: "8px 0 0", fontSize: 12, color: C.dim }}>Loading your history from the Sheet… you can start an exam now.</div>}
+          {!data.loaded && <div style={{ margin: "8px 0 0", fontSize: 12, color: C.dim }}>Loading your history from the Sheet…{user.role === "candidate" ? " you can start an exam now." : ""}</div>}
           {data.loaded && data.error && (
             <div style={{ margin: "8px 0 0", padding: "8px 12px", borderRadius: 6, background: "rgba(224,80,40,0.12)", border: "1px solid rgba(224,80,40,0.3)", fontSize: 12, color: C.red, fontWeight: 600, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>Couldn't reach the Sheet after 4 tries. The exam and scoring still work; saving retries on its own.</span>
@@ -117,7 +121,9 @@ export default function App() {
           <>
             {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} referenceText={referenceText}
               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}
-            {visibleTabs.length === 0 && <Card><div style={{ fontSize: 14, color: C.muted }}>Mentor views arrive in sessions 5–8. Until then, use the <a href={OLD_APP} style={{ color: C.blue }}>old app</a>.</div></Card>}
+            {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}
+              onUpdate={(s) => setData((d) => ({ ...d, maSessions: d.maSessions.map((x) => (x.id === s.id ? s : x)) }))}
+              onDelete={(id) => setData((d) => ({ ...d, maSessions: d.maSessions.filter((x) => x.id !== id) }))} />}
           </>
         )}
       </div>

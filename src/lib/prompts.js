@@ -8,6 +8,8 @@
 // SCORER_SYSTEM is the old MA_TREND_SCORER_SYSTEM, harvested verbatim. It is the §17 fallback path until
 // /api/score (session 4) replaces it. Output shape §8.3 unchanged.
 
+import { scorecard, resultCard } from "./scorecard.js";
+
 // ── What "AT level" means — shared by peer and examiner so both know where the bar is ──────────────
 export const AT_STANDARD = `2026 AT MA/TU ASSESSMENT FORM (1–6; 4 = essential elements appear regularly at a satisfactory level; each section must AVERAGE 4 to pass):
 MOVEMENT ANALYSIS
@@ -265,7 +267,9 @@ export function buildScorerSystem({ mentorAssessments, maSessions, users, refere
 
 export const SCORE_JSON_SHAPE = `{"did_well":["list"],"opportunity":["next focus"],"score_rationale":{"describe":"evidence","cause_effect":"evidence","evaluate":"evidence","prescription":"evidence","biomechanics":"evidence","communication":"evidence"},"scores":{"describe":0,"cause_effect":0,"evaluate":0,"prescription":0,"biomechanics":0,"communication":0},"key_learning":"text"}`;
 
-/** Old scoring input for the AT exam, unchanged apart from being a function. */
+const cardLine = (c) => `${c.form === "legacy" ? "(old scorer, pre-2026 lines) " : "(2026 form) "}${c.lines.map((l) => `${l.short}=${l.score ?? "—"}`).join(" ")}`;
+
+/** Old scoring input for the AT exam. Past scores come through scorecard.js (session 5). */
 export function buildScoreInput(exam, { pastSessions = [], parseSummary }) {
   const dialogText = lines(exam.dialogMessages, "Mark", "Peer");
   const prescribeText = lines(exam.prescriptionDialog, "Mark", "Peer");
@@ -274,12 +278,13 @@ export function buildScoreInput(exam, { pastSessions = [], parseSummary }) {
   const scored = pastSessions.filter((s) => s.summary).slice(0, 3);
   if (scored.length) {
     pastContext = "\n\nPREVIOUS SESSIONS FOR COMPARISON:\n";
-    for (const s of scored) { try { const p = parseSummary(s.summary); if (p?.scores) pastContext += `[${s.date}] D=${p.scores.describe} C/E=${p.scores.cause_effect} E=${p.scores.evaluate} P=${p.scores.prescription} B=${p.scores.biomechanics} C=${p.scores.communication}. Gaps: ${(p.opportunity || p.gaps || []).join(", ")}\n`; } catch { /* skip */ } }
+    // One reader (scorecard.js). Each past session is quoted on the form it was scored on, labelled — never legacy keys read off a 2026 result.
+    for (const s of scored) { const c = scorecard(s); if (c.status === "scored") pastContext += `[${s.date}] ${cardLine(c)}. Gaps: ${(c.detail.opportunity || c.detail.gaps || []).join(", ")}\n`; }
   }
   let revisionContext = "";
   if (exam.attempts.length > 0) {
     revisionContext = `\n\nThis is revision ${exam.attempts.length} of 3. Mark has revised his observations, root cause, and/or prescription based on previous feedback. Previous scores:\n`;
-    exam.attempts.forEach((a, i) => { const sc = a.scores || {}; revisionContext += `${i === 0 ? "Initial" : "Revision " + i}: D=${sc.describe} C/E=${sc.cause_effect} E=${sc.evaluate} P=${sc.prescription} B=${sc.biomechanics} C=${sc.communication}. Gaps: ${(a.opportunity || a.gaps || []).join(", ")}\n`; });
+    exam.attempts.forEach((a, i) => { const c = resultCard(a); revisionContext += `${i === 0 ? "Initial" : "Revision " + i}: ${c.status === "scored" ? cardLine(c) : "not scored"}. Gaps: ${(a.opportunity || a.gaps || []).join(", ")}\n`; });
     revisionContext += "Score this attempt on its own merits but note what improved from previous attempts.\n";
   }
   return `SCORE ONLY WHAT THE EXAMINER HEARD:\n\nPEER DIALOG (examiner observed):\n${dialogText}\n\nPRESCRIPTION DELIVERY TO PEER (examiner observed):\n${prescribeText}\n\nMARK'S PRESENTATION TO EXAMINER:\n${exam.presentation}\n\nEXAMINER Q&A:\n${debriefText}${revisionContext}${pastContext}\n\nContext: ${exam.who}, ${exam.activity}, ${exam.conditions}\n\nScore ONLY what the examiner heard. Do NOT consider any private notes. Evaluate: (1) Did he connect the task to the subject's intent when delivering it? (2) Did he explain the technical WHY to the examiner?\n\nRESPOND ONLY IN JSON (no markdown, no backticks). CHECK FROM THE TOP DOWN starting at 5: Does candidate extend beyond expected with autonomous skill? If yes, 5. Then check 4: appears regularly at AT standard? If yes, 4. If something missing, verify 4-level gap not 5-level. Only 3 if genuine 4-level element absent.\n${SCORE_JSON_SHAPE}`;

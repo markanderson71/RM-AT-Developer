@@ -4,27 +4,16 @@ import { uid, today } from "./users.js";
 export const PHASES = ["setup", "observe", "dialog", "prescribe", "present", "debrief", "scored"];
 export const PHASE_LABEL = { setup: "Set up", observe: "Observe", dialog: "Peer dialog", prescribe: "Prescribe", present: "Examiner – Present", debrief: "Examiner – Q&A", scored: "Score" };
 
-// 2026 AT MA/TU form (§5.3). Two sections, three lines each; pass = both section averages ≥ 4.
-export const SECTIONS = [
-  { key: "ma", label: "Movement Analysis", lines: [
-    { key: "cause_effect", label: "Cause & Effect" }, { key: "evaluate", label: "Evaluate" }, { key: "prescription", label: "Prescription" }] },
-  { key: "tu", label: "Technical Understanding", lines: [
-    { key: "desired_performances", label: "Desired Performances" }, { key: "biomechanics", label: "Bio / Physics" }, { key: "equipment", label: "Equipment" }] },
-];
-export const CRITERIA = SECTIONS.flatMap((s) => s.lines);
+// Score arithmetic lives in scorecard.js — the one reader (session 5). Nothing here computes an average.
+import { SECTIONS, LINES, DIAGNOSTICS, formMath, formOf, isLegacyAttempt, attemptRank, bestAttempt } from "./scorecard.js";
+export { SECTIONS, DIAGNOSTICS, isLegacyAttempt, bestAttempt };
+export const CRITERIA = LINES;
 /** Pre-2026 lines. Still scored as diagnostics; still required by the old app's hasFullScores. */
-export const DIAGNOSTICS = [{ key: "describe", label: "Describe" }, { key: "communication", label: "Communication" }];
 export const LEGACY_CRITERIA = ["describe", "cause_effect", "evaluate", "prescription", "biomechanics", "communication"];
 export const MAX_REVISIONS = 3;
-
-const mean = (xs) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100 : 0);
-/** Section averages for any attempt — computed here so legacy-scorer attempts and old rows render too. */
-export function sectionAverages(a) {
-  if (a?.section_averages) return a.section_averages;
-  const avgOf = (sec) => mean(sec.lines.map((l) => Number(a?.scores?.[l.key])).filter((n) => n > 0));
-  return { ma: avgOf(SECTIONS[0]), tu: avgOf(SECTIONS[1]) };
-}
-export const isLegacyAttempt = (a) => !!a?.scores && (a.scorer === "legacy" || a.scores.equipment == null);
+/** 2026-form averages for an attempt, or null (legacy attempt, or a line missing). */
+export const sectionAverages = (a) => (formOf(a) === "2026" ? formMath(a.scores).sections : null);
+export const attemptTotal = attemptRank;
 
 export const STORAGE_KEY = "rmat_exam_v1";
 
@@ -60,8 +49,6 @@ export function persistExam(exam) {
 
 const lines = (msgs, me, them) => (msgs || []).map((m) => `${m.role === "user" ? me : them}: ${m.content}`).join("\n");
 
-/** Rank for "best attempt": MA average + TU average (what the form passes on), not a sum of lines. */
-export const attemptTotal = (a) => { if (!a?.scores) return 0; const v = sectionAverages(a); return Math.round((v.ma + v.tu) * 100) / 100; };
 
 /** True when there is anything in the exam that a "New exam" click would destroy. */
 /** Has Mark actually put anything into this exam? A blank form has nothing to start over from. */
@@ -74,20 +61,26 @@ export function scoringSession(exam) {
   return { id: exam.savedSessionId || null, date: s.date, type: s.type, who: s.who, activity: s.activity, conditions: s.conditions, transcript: s.transcript, sections: s.sections };
 }
 
-/** Keep the Sheet cell under its 50K limit: drop debug + the retrieval manifest, shorten cited text; shed more only if needed. */
+/**
+ * Keep the Sheet cell under its 50K limit: drop debug + the retrieval manifest, shorten cited text (Chris 400, others 200 —
+ * PSIA citations render collapsed).
+ */
 export function compactForSheet(a) {
   const { debug, raw, timestamp, attemptNum, ...r } = a || {};
   if (r.meta?.context) r.meta = { ...r.meta, context: { ...r.meta.context, chunks: undefined } };
-  if (r.citation_details) r.citation_details = Object.fromEntries(Object.entries(r.citation_details).map(([k, v]) => [k, { ...v, text: v.text?.length > 400 ? `${v.text.slice(0, 400)}…` : v.text }]));
+  if (r.citation_details) r.citation_details = Object.fromEntries(Object.entries(r.citation_details).map(([k, v]) => { const cap = v.author === "chris" ? 400 : 200; return [k, { ...v, text: v.text?.length > cap ? `${v.text.slice(0, cap)}…` : v.text }]; }));
+  // The extraction is kept whole apart from cause_effect_chain (re-rendered in code from connections[]): it is the
+  // retrieval query and the evidence for "try that line again", so trimming it would change what practice is scored against.
+  if (r.extraction) { const { cause_effect_chain, ...x } = r.extraction; r.extraction = x; }
   return r;
 }
-/** Best = highest MA+TU among new-scorer attempts. An old-scorer fallback runs high and is on a different form, so it only wins if it's all there is. */
-export const bestAttempt = (attempts) => {
-  const scored = attempts.filter((a) => a?.scores);
-  const pool = scored.some((a) => !isLegacyAttempt(a)) ? scored.filter((a) => !isLegacyAttempt(a)) : scored;
-  return pool.reduce((b, a) => (attemptTotal(a) > attemptTotal(b) ? a : b), pool[0] || attempts[0] || null);
-};
-
+/** Shed order when still over: the ladder text first (rationale keeps the conclusion), then the extraction (try-again re-extracts), then cited text. */
+export const SHED_ORDER = ["justifications", "extraction", "citation_details"];
+export function fitSummary(summary, limit = 45000) {
+  let out = summary;
+  for (const shed of SHED_ORDER) { if (JSON.stringify(out).length < limit) break; const { [shed]: _drop, ...rest } = out; out = { ...rest, shed: [...(out.shed || []), shed] }; }
+  return out;
+}
 /** Session object in the exact shape the old app saved (transcript + sections + summary with allAttempts). */
 export function buildSession(exam, { parseAIJson }) {
   const cleaned = exam.attempts.map((a) => { if (a.scores) return a; if (a.raw) { const r = parseAIJson(a.raw); if (r?.scores) return { ...a, ...r }; } return a; });
@@ -98,10 +91,10 @@ export function buildSession(exam, { parseAIJson }) {
   const transcript = `PRIVATE NOTES:\n${exam.observations}\nRoot cause: ${exam.rootCause}\n\nPEER DIALOG:\n${dialogText}\n\nPRESCRIPTION DELIVERY (to peer):\n${prescribeText}\n\nPRESENTATION TO EXAMINER:\n${exam.presentation}\n\nEXAMINER Q&A:\n${debriefText}`;
   let summary = {
     ...(best ? compactForSheet(best) : {}),
-    allAttempts: cleaned.map((a, i) => ({ attempt: i + 1, scores: a.scores || null, section_averages: a.scores ? sectionAverages(a) : null, scorer: a.scorer || a.meta?.scorer || null, did_well: a.did_well || a.strengths || [], opportunity: a.opportunity || a.gaps || [], key_learning: a.key_learning || "" })),
+    allAttempts: cleaned.map((a, i) => ({ attempt: i + 1, scores: a.scores || null, section_averages: sectionAverages(a), scorer: a.scorer || a.meta?.scorer || null, did_well: a.did_well || a.strengths || [], opportunity: a.opportunity || a.gaps || [], key_learning: a.key_learning || "" })),
     bestAttempt: cleaned.indexOf(best) + 1, totalAttempts: cleaned.length, scoredAt: new Date().toISOString(),
   };
-  for (const shed of ["extraction", "justifications", "citation_details"]) { if (JSON.stringify(summary).length < 45000) break; const { [shed]: _drop, ...rest } = summary; summary = { ...rest, shed: [...(summary.shed || []), shed] }; }
+  summary = fitSummary(summary);
   const rev = exam.attempts.length - 1;
   return {
     id: exam.savedSessionId || uid(), date: today(), type: "at_exam",

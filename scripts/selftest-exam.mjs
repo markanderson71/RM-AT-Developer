@@ -22,7 +22,7 @@ assert.equal(E.PHASE_LABEL.present, 'Examiner – Present'); assert.equal(E.PHAS
 // scoring payload: sections, no summary, nothing from private state leaks beyond what buildSession already saves
 const ss = E.scoringSession(exam); assert.ok(ss.sections.presentation === 'pres' && !('summary' in ss) && ss.type === 'at_exam');
 // best attempt: legacy attempt has no TU scores beyond biomechanics → ranked on section averages, not a six-line sum
-assert.deepEqual(E.sectionAverages(legacy), { ma: 4, tu: 4 }); assert.ok(E.isLegacyAttempt(legacy) && !E.isLegacyAttempt(exam.attempts[1]));
+assert.equal(E.sectionAverages(legacy), null, 'a legacy attempt has no 2026 section averages (session 5: TU was being averaged over one line)'); assert.ok(E.isLegacyAttempt(legacy) && !E.isLegacyAttempt(exam.attempts[1]));
 assert.equal(E.bestAttempt(exam.attempts), exam.attempts[1], 'a high legacy fallback never beats a new-scorer attempt');
 // saved summary
 const session = E.buildSession(exam, { parseAIJson });
