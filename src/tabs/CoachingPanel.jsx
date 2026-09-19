@@ -13,6 +13,7 @@ import { mentorCites, MentorQuote } from "./Rationale.jsx";
 
 const xKey = (s) => `rmat_x_${s.id}_${hashOf({ t: s.transcript, s: s.sections })}`;
 const triesKey = (s) => `rmat_tries_${s.id}`;
+const OPEN_KEY = "rmat_coaching_open";
 const load = (k, fb) => { try { return JSON.parse(window.localStorage.getItem(k)) ?? fb; } catch { return fb; } };
 const store = (k, v) => { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota — practice log is a convenience */ } };
 
@@ -24,19 +25,22 @@ export default function CoachingPanel({ session, card, canPractice }) {
   }).filter(Boolean), [card, session, d]);
   const [tries, setTries] = useState(() => load(triesKey(session), {}));
   useEffect(() => store(triesKey(session), tries), [tries, session]);
+  // Expand / hide like "Mark's MA analysis" and "AI analysis". The choice is remembered across sessions and reloads.
+  const [open, setOpen] = useState(() => load(OPEN_KEY, true));
   if (card.form !== "2026" || !rows.length) return null;
 
   return (
-    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: "rgba(232,160,80,0.05)", border: "1px solid rgba(232,160,80,0.18)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 2 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.amber }}>Coaching — one move per line</div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, border: `1px solid ${C.faint}`, borderRadius: 4, padding: "1px 6px" }}>AI SUGGESTIONS · not Chris's words</span>
-      </div>
-      <Hint style={{ marginBottom: 8, lineHeight: 1.5 }}>Lowest lines first. The rewrite is the evaluator's; the quoted statement under it is what Chris actually said.</Hint>
+    <details open={open} onToggle={(e) => { const v = e.currentTarget.open; if (v !== open) { setOpen(v); store(OPEN_KEY, v); } }}
+      style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(232,160,80,0.05)", border: "1px solid rgba(232,160,80,0.18)" }}>
+      <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.amber }}>
+        Coaching — one move per line
+        <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: C.dim, border: `1px solid ${C.faint}`, borderRadius: 4, padding: "1px 6px" }}>AI SUGGESTIONS · not Chris's words</span>
+      </summary>
+      <Hint style={{ margin: "6px 0 8px", lineHeight: 1.5 }}>Lowest lines first. The rewrite is the evaluator's; the quoted statement under it is what Chris actually said.</Hint>
       {rows.slice().sort((a, b) => (a.score ?? 9) - (b.score ?? 9)).map((r) => (
         <Line key={r.key} r={r} session={session} extraction={d.extraction} canPractice={canPractice} tries={tries[r.key] || []} onTry={(t) => setTries((p) => ({ ...p, [r.key]: [...(p[r.key] || []), t].slice(-5) }))} />
       ))}
-    </div>
+    </details>
   );
 }
 
