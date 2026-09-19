@@ -1,7 +1,7 @@
 // Offline checks for the Zoom pipeline. No network, no keys.  npm run test:zoom [transcript.txt]
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { parseTranscript, speakerReport, windows, quoteGrounded, textOverlap, toChunks, dedupe, ingestZoom } from '../lib/ingest/zoom.js';
+import { normalizeSessions, sessionAt, parseTranscript, speakerReport, windows, quoteGrounded, textOverlap, toChunks, dedupe, ingestZoom } from '../lib/ingest/zoom.js';
 import { zoomSystem, zoomUser } from '../lib/prompts/zoom.js';
 import { supersessionCandidates, canSupersede, normalizeChunk } from '../lib/store.js';
 
@@ -65,6 +65,10 @@ await assert.rejects(() => ingestZoom({ transcript: raw, date: '9/18', speakerMa
 const live = await ingestZoom({ transcript: raw, date: '2026-09-18', speakerMap: map, replacePending: true }, { store, completeJson });
 assert.equal(live.inserted, 1); assert.equal(calls.deleted, 1); assert.equal(live.tool_feedback.length, 1);
 assert.ok(calls.inserted.every((c) => c.approved === false && !('embedding' in c)), 'pending chunks carry no embedding');
+const ses = normalizeSessions([{ from: '00:00:00', to: '00:24:30', id: 'ma_7uk7lnh', label: 'Fall Line Bumps' }]);
+assert.equal(sessionAt(5, ses).id, '7uk7lnh'); assert.equal(sessionAt(1500, ses), null); assert.throws(() => normalizeSessions([{ id: 'x', from: 'soon', to: '1:00' }]));
+const tagged = await ingestZoom({ transcript: raw, date: '2026-09-18', speakerMap: map, replacePending: true, sessions: [{ from: '00:00', to: '00:30', id: 'ma_SELF' }] }, { store, completeJson });
+assert.equal(calls.inserted[0].metadata.session_id, 'SELF', 'chunk inside a session range carries session_id for self-exclusion'); assert.equal(tagged.about_sessions[0].chunks, 1);
 
 // §5.6
 const old = (n, o) => ({ id: `old-${n}`, author: 'chris', approved: true, date: '2026-09-17', source: 'chris_comment', source_ref: 'session:x', criteria: ['general'], skills: [], type: 'principle', text: 't', ...o });
