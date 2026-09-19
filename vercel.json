@@ -17,6 +17,9 @@
     },
     "api/score/*.js": {
       "maxDuration": 300
+    },
+    "api/ingest/*.js": {
+      "maxDuration": 300
     }
   }
 }
