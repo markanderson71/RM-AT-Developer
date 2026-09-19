@@ -56,4 +56,24 @@ assert.throws(() => normalizeResult({ scores: { cause_effect: 3 } }, { extractio
 assert.deepEqual(n.quality.ladder_skipped.length, 6, 'missing ladder rungs are flagged');
 const stored = parseSummary(JSON.stringify(JSON.stringify(n)));
 assert.ok(hasFullScores(stored), 'legacy hasFullScores passes'); assert.equal(stored.key_learning, 'k');
+
+// ── session 6: extract v4 facts, speaker guard, exemplar bookkeeping ──
+const { comparisonFacts } = await import('../lib/extractStats.js');
+const { speakerGuard, EXTRACT_VERSION, EXTRACT_SCHEMA } = await import('../lib/prompts/extract.js');
+assert.equal(EXTRACT_VERSION, 4); assert.ok(EXTRACT_SCHEMA.includes('vs_ideal') && EXTRACT_SCHEMA.includes('states_effect_on_observed_performance'));
+const cf = comparisonFacts({ vs_intent: { state: 'made', reference_quote: 'you wanted a guided ski', quote: 'you wanted guided; the top was pivoted' }, vs_ideal: { state: 'made', quote: 'should be rounder' }, outcome_dimensions: ['turn_shape'] });
+assert.equal(cf.vs_intent.state, 'made'); assert.equal(cf.vs_ideal.state, 'partial', '"made" without the ideal quoted is partial'); assert.equal(cf.made, true); assert.equal(cf.both_made, false);
+assert.equal(cf.intent_referenced_quote, 'you wanted a guided ski', 'v3 fields still written');
+assert.equal(comparisonFacts({ made: true, intent_referenced_quote: 'r', quote: 'q' }).vs_intent.state, 'made', 'a stored v3 comparison is lifted');
+assert.equal(comparisonFacts(null).made, false); assert.equal(comparisonFacts({ vs_ideal: { state: 'bogus' } }).vs_ideal.state, 'absent');
+const sess = { sections: { prescription_delivery: 'Mark: Keep your zipper facing the fall line and steer both feet from the top of the turn.\nPeer: So focus on initiating with a guided ski from the top of the turn.' } };
+const gx = { prescription: { delivery_to_peer: 'Focus on initiating with a guided ski from the top of the turn', peer_restated: null } };
+assert.equal(speakerGuard(gx, sess).length, 1); assert.equal(gx.prescription.delivery_to_peer, null); assert.ok(gx.prescription.peer_restated.startsWith('Focus on'), "the peer's words go back where they belong");
+const gy = { prescription: { delivery_to_peer: 'Keep your zipper facing the fall line and steer both feet from the top of the turn.' } };
+assert.equal(speakerGuard(gy, sess).length, 0, "Mark's own words are left alone");
+const idx = { ...a.chunkIndex, '0000aaaa': { id: '0000aaaa-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-18', type: 'exemplar', source_ref: 'session:7uk7lnh', title: 't', text: 'EXEMPLAR …' } };
+const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['c:0000aaaa'] }, exemplar_anchor: { evaluate: 'c:0000aaaa Evaluate: Chris 2 — equal' } }, { extraction: x, chunkIndex: idx });
+assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);
+assert.equal(ne.citation_details['c:0000aaaa'].type, 'exemplar');
+assert.deepEqual(n.quality.exemplars_cited, [], 'no exemplars in context → none cited, no error');
 console.log('selftest-score: all checks passed');

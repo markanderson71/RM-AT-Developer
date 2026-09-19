@@ -19,7 +19,17 @@ export const statement = (d) => {
 };
 
 export const citesFor = (detail, key) => (detail?.citations?.[key] || []).map((id) => ({ id, ...(detail.citation_details?.[id] || {}) })).filter((c) => c.text || c.title);
-export const mentorCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author));
+/** A mentor's STATEMENTS — what goes inside quotation marks. A scored session (exemplar) is his number, not his words. */
+export const mentorCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author) && c.type !== "exemplar");
+export const exemplarCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author) && c.type === "exemplar");
+
+/** "Compared with a session Chris scored" — his number for the same line, and the evaluator's weaker/equal/stronger note. */
+export const ExemplarNote = ({ c, anchor }) => (
+  <div style={{ margin: "4px 0 0", padding: "5px 8px", borderLeft: `2px solid ${C.examiner}`, background: "rgba(224,160,64,0.05)", borderRadius: "0 4px 4px 0", fontSize: 12, lineHeight: 1.5 }}>
+    <span style={{ fontWeight: 700, color: C.examiner }}>Compared with a session {cap(c.author)} scored{c.date ? ` (${shortDate(c.date)})` : ""}: </span>
+    <span style={{ color: C.body }}>{anchor ? String(anchor).replace(/^\s*\[?c:[0-9a-f]{8}\]?\s*/i, "") : (c.title || "")}</span>
+  </div>
+);
 
 export const MentorQuote = ({ c }) => (
   <div style={{ margin: "4px 0 0", padding: "5px 8px", borderLeft: `2px solid ${C.examiner}`, background: "rgba(224,160,64,0.05)", borderRadius: "0 4px 4px 0", fontSize: 12, lineHeight: 1.5 }}>
@@ -38,13 +48,14 @@ export default function Rationale({ card, open = false }) {
       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.02)", marginTop: 4 }}>
         {card.lines.map((l) => {
           const why = d.score_rationale[l.key]; if (!why) return null;
-          const mentor = mentorCites(d, l.key), other = citesFor(d, l.key).filter((c) => !MENTORS.has(c.author));
+          const mentor = mentorCites(d, l.key), other = citesFor(d, l.key).filter((c) => !MENTORS.has(c.author));   // exemplars: neither — drawn below as a comparison
           const ladder = d.justifications?.[l.key];
           return (
             <div key={l.key} style={{ marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
               <div><span style={{ fontWeight: 700, color: scoreColor(l.score) }}>{l.label} ({l.score ?? "—"}): </span><span style={{ color: "#b0b8c0" }}>{why}</span></div>
               {d.evidence_count?.[l.key] && <div style={{ color: C.dim, marginTop: 2 }}>Evidence — {d.evidence_count[l.key]}</div>}
               {mentor.map((c) => <MentorQuote key={c.id} c={c} />)}
+              {exemplarCites(d, l.key).slice(0, 1).map((c) => <ExemplarNote key={c.id} c={c} anchor={d.exemplar_anchor?.[l.key]} />)}
               {(other.length > 0 || ladder) && (
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 3 }}>
                   {other.length > 0 && (

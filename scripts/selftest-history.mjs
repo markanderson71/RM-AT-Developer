@@ -89,7 +89,11 @@ const py = { connections: [conn({ outcome: null, how_stated: false })] }; CO.mer
 assert.deepEqual(CO.unitCheck('cause_effect', py).missing.length, 2);
 assert.equal(CO.unitCheck('equipment', { equipment: { addressed: true } }).complete, false, 'a recommendation with no stated effect is not a unit (§17, Chris 9/18)');
 assert.equal(CO.unitCheck('equipment', { equipment: { addressed: true, linked_to_biomechanics: true } }).complete, true);
-assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { made: true, intent_referenced_quote: 'you wanted', outcome_dimensions: ['speed'] } }).complete, true);
+assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { made: true, intent_referenced_quote: 'you wanted', outcome_dimensions: ['speed'] } }).complete, false, 'v3-shaped comparison: intent only — the ideal is still missing');
+assert.equal(CO.unitCheck('evaluate', { ma_type: 'at_exam', comparison_to_intended_outcome: { vs_intent: { state: 'made', reference_quote: 'you wanted', quote: 'q' }, vs_ideal: { state: 'made', reference_quote: 'bumps ask for', quote: 'q2' }, outcome_dimensions: ['speed'] } }).complete, true);
+assert.equal(CO.unitCheck('evaluate', { ma_type: 'written', comparison_to_intended_outcome: { vs_ideal: { state: 'made', reference_quote: 'the task asks for', quote: 'q2' }, outcome_dimensions: ['line'] } }).complete, true, 'no peer → no intent to compare against');
+assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { vs_intent: { state: 'made', quote: 'q' }, outcome_dimensions: ['speed'] } }).missing.length, 2, '"made" without the reference quoted is demoted in code');
+assert.match(CO.unitCheck('equipment', { equipment: { addressed: true, states_effect_on_observed_performance: false, linked_to_environment: true } }).missing[0], /recommendation/);
 // merge: the replaced sentence's items go, the passage's arrive, stats recomputed, original untouched
 const orig = { connections: [conn({ quote: 'which caused the ski to begin to rapidly pivot to an edge', how_stated: false, how_quote: null }), conn({ quote: 'the ankles had a higher rate of flexion', how_stated: false, how_quote: null })], equipment: { addressed: false }, skills_referenced: ['rotary'] };
 const merged = CO.mergePassage(orig, { connections: [conn({ quote: 'new' })], equipment: { addressed: false }, skills_referenced: ['edging'] }, { section: 'presentation', replacedText: 'It was whole-body rotation, which caused the ski to begin to rapidly pivot to an edge.' });

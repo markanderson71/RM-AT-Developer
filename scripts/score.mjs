@@ -39,6 +39,8 @@ for (const id of ids) {
   const m = r.meta.context;
   const exCited = Object.entries(r.citation_details).filter(([, d]) => d.type === 'exemplar').map(([c]) => c);
   console.log(`  context ${m.tokens.total} tok · chris ${m.counts.chris} · exemplars ${m.counts.exemplars}${m.exemplar_sessions?.length ? ` (${m.exemplar_sessions.join(', ')})` : ''} · exemplar cited: ${exCited.length ? exCited.join(' ') : 'NO'} · psia ${m.counts.psia} · ${Math.round(r.meta.ms.total / 1000)}s`);
+  const cmp = r.extraction.comparison_to_intended_outcome; if (cmp?.vs_intent) console.log(`  evaluate evidence: vs intent ${cmp.vs_intent.state} · vs ideal ${cmp.vs_ideal.state} · equipment effect on observed: ${r.extraction.equipment?.addressed ? !!r.extraction.equipment.states_effect_on_observed_performance : 'n/a'}`);
+  if (r.quality.extraction_guards?.length) console.log(`  extraction guards: ${r.quality.extraction_guards.join(' | ')}`);
   const cs = r.extraction.connection_stats; if (cs) console.log(`  connections ${cs.total} · complete ${cs.complete} · ski-perf ${cs.with_ski_performance} · outcome ${cs.with_outcome} · how ${cs.with_how}`);
   if (r.quality.ladder_skipped?.length) console.log(`  LADDER SKIPPED on: ${r.quality.ladder_skipped.join(', ')}`);
   if (r.quality.guards_applied.length) console.log(`  guards: ${r.quality.guards_applied.join(' | ')}`);
