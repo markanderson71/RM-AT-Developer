@@ -21,6 +21,10 @@ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : nu
 const DRY = flag('--dry'), only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--mentor').map((x) => x.replace(/^ma_/, ''));
 const mentors = opt('--mentor') ? [opt('--mentor').toLowerCase()] : MENTORS;
 
+const KNOWN = ['--dry', '--reextract', '--comments', '--mentor'];
+const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
+if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')}) — nothing was written`); process.exit(1); }
+
 const sessions = (await getMaSessions()).filter((s) => !only.length || only.includes(s.id));
 if (only.length && sessions.length !== only.length) { console.error(`not found: ${only.filter((id) => !sessions.some((s) => s.id === id)).join(', ')}`); process.exit(1); }
 mkdirSync('out', { recursive: true });

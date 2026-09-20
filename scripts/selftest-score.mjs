@@ -71,6 +71,28 @@ const gx = { prescription: { delivery_to_peer: 'Focus on initiating with a guide
 assert.equal(speakerGuard(gx, sess).length, 1); assert.equal(gx.prescription.delivery_to_peer, null); assert.ok(gx.prescription.peer_restated.startsWith('Focus on'), "the peer's words go back where they belong");
 const gy = { prescription: { delivery_to_peer: 'Keep your zipper facing the fall line and steer both feet from the top of the turn.' } };
 assert.equal(speakerGuard(gy, sess).length, 0, "Mark's own words are left alone");
+// evidence guards, on the real 7uk7lnh quotes from the failed v2-rag-3 live run (9/19)
+const { evidenceGuards } = await import('../lib/prompts/extract.js');
+const { whoSaid } = await import('../lib/coaching.js');
+const ideal = 'Turn shape is symetrical above and below the fall line and rounded, corridor is consitant through out the run and speed in the turn is relatively similiar at the top and bottom of the turn and the skier COM has a consistant fall line orientation.';
+const eqQ = "the skier should reexamine their boot selection. The skier has the ability to hyperflex their ankles as forces build. The longer length of the skier's tibia and femur are also a contributing factors. A more rigid cuff or boot fit might allow the skier to have better fore/aft control. This will help the skier be more centered by having the boot better support the skier as they move their center of mass in terrain with higher forces.";
+const peerIntent = 'I wanted the skis to pivot and release cleanly through each trough so I could stay stacked and control speed down the fall line.';
+const bumps = (where) => ({ sections: { private_notes: where === 'notes' ? ideal : 'short note', peer_dialog: `Mark: What were you going for?\nPeer: ${peerIntent}`, presentation: `${where === 'spoken' ? `${ideal} ` : ''}the skier struggled to maintain a corridor and a symmetrical turn shape, and speed control largely depended on the top of the bump. ${eqQ}` } });
+const inv = () => ({ desired_performance: { stated: true, quote: ideal }, task: { described: true, quote: ideal }, equipment: { addressed: true, quote: eqQ, states_effect_on_observed_performance: true },
+  comparison_to_intended_outcome: { vs_intent: { state: 'made', reference_quote: peerIntent, quote: 'the skier struggled to maintain a corridor' }, vs_ideal: { state: 'made', reference_quote: ideal, quote: 'the skier struggled to maintain a corridor and a symmetrical turn shape' } } });
+const xn = inv(); const gn = evidenceGuards(xn, bumps('notes')); const cn = comparisonFacts(xn.comparison_to_intended_outcome);
+assert.equal(xn.desired_performance.stated, false, 'an ideal that exists only in private notes was never stated'); assert.equal(xn.task.described, false);
+assert.equal(cn.vs_ideal.state, 'partial', 'a comparison to an ideal he never said out loud is partial'); assert.equal(cn.both_made, false);
+assert.equal(xn.equipment.states_effect_on_observed_performance, false, 'should / might allow / will help = recommendation, not an effect (Chris, 9/18)'); assert.equal(xn.equipment.addressed, true);
+assert.equal(cn.vs_intent.state, 'made'); assert.equal(cn.vs_intent.reference_is_marks_words, false, "the peer's words as the reference are flagged, not punished"); assert.equal(gn.length, 5);
+const xs = inv(); evidenceGuards(xs, bumps('spoken'));
+assert.equal(xs.desired_performance.stated, true, 'in the notes AND spoken = spoken'); assert.equal(comparisonFacts(xs.comparison_to_intended_outcome).both_made, true);
+const eff = { equipment: { addressed: true, states_effect_on_observed_performance: true, quote: 'Her boots are too soft, so the cuff collapsed in every trough and her hips dropped behind her feet.' } };
+evidenceGuards(eff, { sections: { presentation: eff.equipment.quote } }); assert.equal(eff.equipment.states_effect_on_observed_performance, true, 'a stated effect on what she did is left alone');
+assert.equal(whoSaid(peerIntent, bumps('notes')).by, 'other'); assert.equal(whoSaid(ideal, bumps('notes')).by, 'notes'); assert.equal(whoSaid(ideal, bumps('spoken')).by, 'mark_spoken');
+const { EVALUATE_SYSTEM: ES } = await import('../lib/prompts/evaluate.js');
+assert.ok(/bounds the rung, never sets it/.test(ES) && !/closest in evidence/.test(ES));
+
 const idx = { ...a.chunkIndex, '0000aaaa': { id: '0000aaaa-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-18', type: 'exemplar', source_ref: 'session:7uk7lnh', title: 't', text: 'EXEMPLAR …' } };
 const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['c:0000aaaa'] }, exemplar_anchor: { evaluate: 'c:0000aaaa Evaluate: Chris 2 — equal' } }, { extraction: x, chunkIndex: idx });
 assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);

@@ -2,13 +2,17 @@
 //   npm run score -- bzfutxv q5omsst 7n6ry6d          → prints a table, writes out/score-<id>.json
 //   npm run score -- 7n6ry6d --compare "2,2,2,2,2,1"  → within-one check vs a scorecard (form order: CE,Ev,Rx,DP,Bio,Eq)
 //   npm run score -- 7uk7lnh --compare chris          → same, against Chris's scorecard on the session as read from the Sheet
+//   npm run score -- 7uk7lnh --compare chris --reuse  → Step 2 only, on the extraction saved in out/score-<id>.json. Use this to A/B a
+//                                                        template change: extraction is not repeatable, so a fresh one confounds the comparison.
 //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
 import 'dotenv/config';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { getMaSessions } from '../lib/sheet.js';
 import { scoreSession } from '../lib/score.js';
 import { SCORED_CRITERIA } from '../lib/vocab.js';
 import { mentorScores } from '../lib/mentorScores.js';
+import { evidenceGuards } from '../lib/prompts/extract.js';
+import { comparisonFacts } from '../lib/extractStats.js';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
@@ -16,6 +20,9 @@ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : nu
 const compareArg = opt('--compare');
 const fixed = compareArg && /\d/.test(compareArg) ? compareArg.split(',').map(Number) : null;
 const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare').map((x) => x.replace(/^ma_/, ''));
+const KNOWN = ['--compare', '--debug', '--include-self', '--reuse'];
+const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
+if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')})`); process.exit(1); }
 if (!ids.length) { console.error('usage: npm run score -- <sessionId> [...] [--compare "2,2,2,2,2,1"] [--debug] [--include-self]'); process.exit(1); }
 
 mkdirSync('out', { recursive: true });
@@ -28,7 +35,16 @@ for (const id of ids) {
   if (compareArg && !fixed && !card) { console.error(`${id}: no ${compareArg} scorecard on this session`); fail = true; continue; }
   const compare = fixed || (card ? SCORED_CRITERIA.map((k) => card.scores[k]) : null);
   console.log(`\n── ${id} · ${s.date} · ${s.type} · ${s.who} · ${s.activity}`);
-  const r = await scoreSession(s, { debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
+  let reused = null;
+  if (flag('--reuse')) {
+    reused = existsSync(`out/score-${id}.json`) ? JSON.parse(readFileSync(`out/score-${id}.json`, 'utf8')).extraction : null;
+    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run`); fail = true; continue; }
+    console.log(`  reusing saved extraction (v${reused.extract_version}) — Step 1 skipped`);
+    // The code guards are part of Step 1; run the current ones over the saved inventory so a guard change is testable on fixed evidence too.
+    reused.extraction_guards = [...new Set([...(reused.extraction_guards || []), ...evidenceGuards(reused, s)])];
+    reused.comparison_to_intended_outcome = comparisonFacts(reused.comparison_to_intended_outcome);
+  }
+  const r = await scoreSession(s, { extraction: reused || undefined, debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
   writeFileSync(`out/score-${id}.json`, JSON.stringify(r, null, 2));
   const old = s.parsedSummary?.scores || {};
   for (const [i, k] of SCORED_CRITERIA.entries()) {

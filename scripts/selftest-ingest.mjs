@@ -139,7 +139,7 @@ const asm = await assemble(mkX(), { sessionId: 'ma_7uk7lnh', deps: { embedQuery:
 assert.deepEqual(calls.find((c) => c.types?.[0] === 'exemplar' && c.types.length === 1).authors, ['chris'], "exemplar slot asks for Chris's only");
 assert.deepEqual(asm.manifest.exemplar_sessions, ['7n6ry6d'], "scoring 7uk7lnh sees 7n6ry6d's exemplar and not its own (nor Gates's)");
 assert.ok(asm.context.includes('Equipment — CHRIS: 1') && !asm.context.includes('Fall Line Bumps'), 'own exemplar text absent from the context');
-assert.ok(asm.context.includes('start from Chris\'s number'), 'anchoring instruction rides with the exemplars'); assert.ok(asm.manifest.tokens.total <= BUDGET.total);
+assert.ok(asm.context.includes('BOUNDS your score') && !/start from Chris/.test(asm.context), 'exemplars bound a score; they are never a starting point for arithmetic (7uk7lnh, v2-rag-3)'); assert.ok(asm.manifest.tokens.total <= BUDGET.total);
 assert.equal(Object.values(asm.chunkIndex).find((c) => c.slot === 'exemplars').type, 'exemplar', 'exemplar is citable');
 assert.ok(normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).embed_text === 'b' && hashText('a') === normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).text_hash, 'hash is of the stored text, not the embedded text');
 
