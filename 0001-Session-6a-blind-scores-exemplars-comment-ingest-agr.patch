@@ -1,0 +1,1106 @@
+From bbf3ab8488da7d9e6f3755ca993471a23f76b96c Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 19 Sep 2026 21:17:26 +0000
+Subject: [PATCH 1/2] Session 6a: blind scores -> exemplars, comment ingest,
+ agreement, exemplar retrieval
+
+---
+ api/agreement.js            |  23 ++++
+ api/ingest/comment.js       |  21 ++++
+ api/ingest/score.js         |  21 ++++
+ lib/agreement.js            |  80 ++++++++++++++
+ lib/assembler.js            |  16 +--
+ lib/ingest/comment.js       |  76 ++++++++++++++
+ lib/ingest/score.js         | 203 ++++++++++++++++++++++++++++++++++++
+ lib/mentorScores.js         |  60 +++++++++++
+ lib/store.js                |  38 ++++++-
+ lib/vocab.js                |   3 +
+ package.json                |   4 +-
+ scripts/ingest-scores.mjs   |  56 ++++++++++
+ scripts/score.mjs           |  13 ++-
+ scripts/selftest-ingest.mjs | 146 ++++++++++++++++++++++++++
+ scripts/selftest-score.mjs  |   3 +-
+ src/api.js                  |  15 +++
+ src/lib/scorecard.js        |  49 +--------
+ 17 files changed, 768 insertions(+), 59 deletions(-)
+ create mode 100644 api/agreement.js
+ create mode 100644 api/ingest/comment.js
+ create mode 100644 api/ingest/score.js
+ create mode 100644 lib/agreement.js
+ create mode 100644 lib/ingest/comment.js
+ create mode 100644 lib/ingest/score.js
+ create mode 100644 lib/mentorScores.js
+ create mode 100644 scripts/ingest-scores.mjs
+ create mode 100644 scripts/selftest-ingest.mjs
+
+diff --git a/api/agreement.js b/api/agreement.js
+new file mode 100644
+index 0000000..cc55584
+--- /dev/null
++++ b/api/agreement.js
+@@ -0,0 +1,23 @@
++// §9 / §12.4 — GET or POST { mentor?: 'chris', window?: 20 } → per-criterion exact %, within-one %, trend. Read-only.
++// Scorecards come from the Sheet; the AI score each is compared with is the one the mentor was blind to (lib/agreement.js).
++// The response holds AI numbers — session 8's panel must only request it for a viewer who is not sealed on any session
++// it lists, or ask for `mentor=<viewer>` rows only (every row is, by construction, a session that mentor has scored).
++import { preflight, readBody, fail } from '../lib/http.js';
++import { getMaSessions } from '../lib/sheet.js';
++import { listExemplars } from '../lib/store.js';
++import { agreement } from '../lib/agreement.js';
++import { MENTORS } from '../lib/vocab.js';
++
++export const config = { maxDuration: 60 };
++
++export default async function handler(req, res) {
++  if (preflight(req, res, ['GET', 'POST'])) return;
++  try {
++    const b = req.method === 'GET' ? (req.query || {}) : readBody(req);
++    const mentor = String(b.mentor || 'chris').toLowerCase();
++    if (!MENTORS.includes(mentor)) return res.status(400).json({ error: `mentor must be one of ${MENTORS.join(', ')}` });
++    const [sessions, exemplars] = await Promise.all([getMaSessions(), listExemplars({ author: mentor }).catch(() => [])]);
++    const pins = Object.fromEntries(exemplars.filter((e) => e.metadata?.ai_at_submit?.scores).map((e) => [String(e.metadata.session_id), e.metadata.ai_at_submit]));
++    return res.status(200).json(agreement(sessions, { mentor, pins, window: Math.min(100, Math.max(1, Number(b.window) || 20)) }));
++  } catch (err) { return fail(res, err, 'agreement'); }
++}
+diff --git a/api/ingest/comment.js b/api/ingest/comment.js
+new file mode 100644
+index 0000000..76d069b
+--- /dev/null
++++ b/api/ingest/comment.js
+@@ -0,0 +1,21 @@
++// §6.3 — POST { sessionId, timestamp?, dryRun? }
++// Called by the app after a mentor's comment is written to the Sheet. With `timestamp`, that one comment; without, every
++// mentor comment on the session the store has not seen. Text is read from the Sheet row — the thread is the record.
++import { preflight, readBody, resolveSession, fail } from '../../lib/http.js';
++import { ingestComments } from '../../lib/ingest/comment.js';
++import * as store from '../../lib/store.js';
++
++export default async function handler(req, res) {
++  if (preflight(req, res)) return;
++  try {
++    const b = readBody(req);
++    if (!b.sessionId) return res.status(400).json({ error: 'sessionId required' });
++    const session = await resolveSession({ sessionId: b.sessionId });
++    let item = null;
++    if (b.timestamp) {
++      item = (session.mentorFeedback || []).find((f) => f.timestamp === b.timestamp) || null;
++      if (!item) return res.status(409).json({ error: `no comment with timestamp ${b.timestamp} on ${session.id} yet — the Sheet write may not have landed; retry` });
++    }
++    return res.status(200).json(await ingestComments({ session, item, dryRun: !!b.dryRun }, { store }));
++  } catch (err) { return fail(res, err, 'ingest/comment'); }
++}
+diff --git a/api/ingest/score.js b/api/ingest/score.js
+new file mode 100644
+index 0000000..6b0dd2d
+--- /dev/null
++++ b/api/ingest/score.js
+@@ -0,0 +1,21 @@
++// §6.4 — POST { sessionId, mentor?: 'chris', extraction?, reextract?, dryRun? }
++// Called by the app right after a blind scorecard is written to the Sheet (fire-and-forget), and by scripts/ingest-scores.mjs.
++// The scorecard is READ FROM THE SHEET, never taken from the request: the Sheet row is the record, and a client cannot
++// post a scorecard into the knowledge store that the thread doesn't hold. → { exemplar_id, inserted, unchanged, … }
++import { preflight, readBody, resolveSession, fail } from '../../lib/http.js';
++import { ingestScore } from '../../lib/ingest/score.js';
++import { extractSession, extractionToText } from '../../lib/prompts/extract.js';
++import * as store from '../../lib/store.js';
++
++export const config = { maxDuration: 300 };
++
++export default async function handler(req, res) {
++  if (preflight(req, res)) return;
++  try {
++    const b = readBody(req);
++    if (!b.sessionId) return res.status(400).json({ error: 'sessionId required' });
++    const session = await resolveSession({ sessionId: b.sessionId });
++    const out = await ingestScore({ session, mentor: b.mentor || 'chris', extraction: b.extraction || null, reextract: !!b.reextract, dryRun: !!b.dryRun }, { store, extractSession, extractionToText });
++    return res.status(200).json(out);
++  } catch (err) { return fail(res, err, 'ingest/score'); }
++}
+diff --git a/lib/agreement.js b/lib/agreement.js
+new file mode 100644
+index 0000000..6a004e1
+--- /dev/null
++++ b/lib/agreement.js
+@@ -0,0 +1,80 @@
++// §9 — agreement between the AI scorer and a mentor's scorecards. "Agreement rate is the system's truth."
++// Pure (no store, no Sheet, no SDK): the endpoint and the CLI feed it sessions; session 8's panel only draws the result.
++//
++// Rules, in the order they bite:
++//   1. The AI number compared is the one the mentor was BLIND TO: his submission's `ai_at_submit`; else the score pinned
++//      in the store when his scorecard was first ingested (`pins`); else — flagged `unpinned` — the summary as it stands.
++//      A rescore never moves a past comparison (§15).
++//   2. 2026 form only. An old-scorer result is never compared with a 2026 scorecard (§15 "one scorecard"); such a
++//      session is listed under `excluded` with the reason, not silently dropped.
++//   3. Blind and not-blind scorecards are reported separately. The headline (and the §1 targets) is BLIND only:
++//      a card given after seeing the AI number, or one the scorer was calibrated on (7n6ry6d), is not agreement.
++//   4. Missing is missing: a line without both numbers is not counted, in either the numerator or the denominator.
++import { SCORED_CRITERIA } from './vocab.js';
++import { mentorScores, cleanScore, formMath } from './mentorScores.js';
++
++export const TARGETS = { exact_pct: 60, within_one_pct: 85 };      // §1
++const pct = (a, n) => (n ? Math.round((a / n) * 1000) / 10 : null);
++const round2 = (n) => Math.round(n * 100) / 100;
++
++const is2026 = (scores, tag) => !!scores && scores.equipment != null && tag !== 'legacy';
++function aiFor(session, card, pins) {
++  const a = card.aiAtSubmit;
++  if (a?.scores) return a.form === 'legacy' || !is2026(a.scores, a.scorer) ? { excluded: 'the AI score at submit was an old-scorer result' } : { scores: a.scores, scorer: a.scorer || null, source: 'submit' };
++  const p = pins?.[session.id];
++  if (p?.scores) return { scores: p.scores, scorer: p.scorer || null, source: 'pinned_at_ingest' };
++  const s = session.parsedSummary;
++  if (is2026(s?.scores, s?.scorer || s?.meta?.scorer)) return { scores: s.scores, scorer: s.meta?.scorer || null, source: 'current_summary', unpinned: true };
++  return { excluded: s?.scores ? 'the saved AI score is an old-scorer result' : 'no AI score on the session' };
++}
++
++function tally(rows) {
++  const per = Object.fromEntries(SCORED_CRITERIA.map((k) => [k, { n: 0, exact: 0, within_one: 0, over: 0, under: 0, sum: 0 }]));
++  for (const r of rows) for (const k of SCORED_CRITERIA) {
++    const d = r.per[k].d; if (d == null) continue;
++    const t = per[k]; t.n++; t.sum += d; if (d === 0) t.exact++; if (Math.abs(d) <= 1) t.within_one++; if (d > 0) t.over++; if (d < 0) t.under++;
++  }
++  const fin = (t) => ({ n: t.n, exact: t.exact, within_one: t.within_one, exact_pct: pct(t.exact, t.n), within_one_pct: pct(t.within_one, t.n), ai_over: t.over, ai_under: t.under, mean_delta: t.n ? round2(t.sum / t.n) : null });
++  const all = Object.values(per).reduce((a, t) => ({ n: a.n + t.n, exact: a.exact + t.exact, within_one: a.within_one + t.within_one, over: a.over + t.over, under: a.under + t.under, sum: a.sum + t.sum }), { n: 0, exact: 0, within_one: 0, over: 0, under: 0, sum: 0 });
++  const res = rows.filter((r) => r.same_result != null);
++  return {
++    sessions: rows.length, overall: fin(all), per_criterion: Object.fromEntries(SCORED_CRITERIA.map((k) => [k, fin(per[k])])),
++    same_result: { n: res.length, agree: res.filter((r) => r.same_result).length },
++    meets_targets: all.n ? pct(all.exact, all.n) >= TARGETS.exact_pct && pct(all.within_one, all.n) >= TARGETS.within_one_pct : null,
++  };
++}
++
++/**
++ * @param sessions  lib/sheet.js getMaSessions() shape (needs mentorFeedback + parsedSummary)
++ * @param opts.mentor  whose scorecards (default chris — ground truth)
++ * @param opts.pins    { [sessionId]: { scores, scorer } } — AI score pinned at first ingest (store exemplar metadata)
++ * @param opts.window  trend window, in blind scorecards (§12.4: 20)
++ */
++export function agreement(sessions, { mentor = 'chris', pins = {}, window = 20 } = {}) {
++  const rows = [], excluded = [];
++  for (const s of sessions || []) {
++    const card = mentorScores(s)[mentor];
++    if (!card) continue;
++    const ai = aiFor(s, card, pins);
++    if (ai.excluded) { excluded.push({ session_id: s.id, date: s.date || null, reason: ai.excluded }); continue; }
++    const per = Object.fromEntries(SCORED_CRITERIA.map((k) => { const a = cleanScore(ai.scores[k]), m = card.scores[k]; return [k, { ai: a, mentor: m, d: a != null && m != null ? a - m : null }]; }));
++    const ds = Object.values(per).map((p) => p.d).filter((d) => d != null);
++    const aiMeets = formMath(ai.scores).meets;
++    rows.push({
++      session_id: s.id, date: s.date || null, scored_at: card.timestamp || null, blind: !!card.blind, ai_source: ai.source, ai_scorer: ai.scorer, unpinned: !!ai.unpinned,
++      per, n: ds.length, exact: ds.filter((d) => d === 0).length, within_one: ds.filter((d) => Math.abs(d) <= 1).length,
++      same_result: aiMeets != null && card.meets != null ? aiMeets === card.meets : null,
++    });
++  }
++  // oldest → newest by when he scored it; id breaks ties (harvested rule: never an unstable sort on the Sheet's rows)
++  rows.sort((a, b) => String(a.scored_at || a.date || '').localeCompare(String(b.scored_at || b.date || '')) || String(a.session_id).localeCompare(String(b.session_id)));
++  const blind = rows.filter((r) => r.blind);
++  const recent = blind.slice(-window);
++  return {
++    mentor, targets: TARGETS, window,
++    blind: tally(blind), recent: tally(recent), not_blind: tally(rows.filter((r) => !r.blind)), all: tally(rows),
++    trend: recent.map((r) => ({ session_id: r.session_id, date: r.date, n: r.n, exact_pct: pct(r.exact, r.n), within_one_pct: pct(r.within_one, r.n), same_result: r.same_result, scorer: r.ai_scorer })),
++    by_scorer: Object.fromEntries([...new Set(blind.map((r) => r.ai_scorer || 'unknown'))].map((v) => [v, tally(blind.filter((r) => (r.ai_scorer || 'unknown') === v)).overall])),
++    sessions: rows, excluded,
++  };
++}
+diff --git a/lib/assembler.js b/lib/assembler.js
+index 403fb66..1f7b1d9 100644
+--- a/lib/assembler.js
++++ b/lib/assembler.js
+@@ -10,11 +10,13 @@
+ //     his blind score (§9) would be measuring retrieval, not judgment.
+ //   - Exemplar slot takes Chris-scored exemplars only (source chris_score). past_session chunks carry OLD-scorer
+ //     numbers, which ran 1–2 high against Chris on 7n6ry6d; feeding them as examples would teach that bias.
+-//     Empty until session 6; PSIA reference takes the slack up to its own cap.
++//     Chris's only (author filter): Gates's and Mike's scorecards are stored for inter-rater data, but the levels the
++//     evaluator is taught are the assessor's. Written by lib/ingest/score.js (session 6); embedded on the extraction
++//     text, i.e. on the same thing the query is. PSIA reference takes the slack up to its own cap while the slot is thin.
+ import { embedQuery } from './embed.js';
+ import * as store from './store.js';
+ import { extractionToText } from './prompts/extract.js';
+-import { SKILLS } from './vocab.js';
++import { SKILLS, TYPES } from './vocab.js';
+ 
+ /** §7.1, in tokens. `psia_max` caps how much slack PSIA may absorb when Chris/exemplar slots under-fill. */
+ export const BUDGET = {
+@@ -98,15 +100,16 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+   if (defs.length < 7) throw new Error(`definitions slot: expected scale + 6 criteria under ${DEFINITIONS_PREFIX}, found ${defs.length}. Ingest reference/at-ma-tu-assessment-form-2026.md.`);
+   const defSlot = { taken: defs, used: defs.reduce((n, c) => n + estTokens(c.text) + 40, 0) };
+ 
+-  // Slot 2 — Chris. No skill filter: his general principles should surface (§7.3.1). Exemplars go to slot 3.
+-  const chrisRanked = (await db.searchByEmbedding(embedding, { authors: ['chris'], sources: CHRIS_SOURCES, limit: CHRIS_MAX_CHUNKS * 2 }))
++  // Slot 2 — Chris. No skill filter: his general principles should surface (§7.3.1). Exemplars go to slot 3 — excluded in
++  // the query, not after it, so a growing pile of exemplars can never use up this slot's candidates.
++  const chrisRanked = (await db.searchByEmbedding(embedding, { authors: ['chris'], sources: CHRIS_SOURCES, types: TYPES.filter((t) => t !== 'exemplar'), limit: CHRIS_MAX_CHUNKS * 2 }))
+     .filter(notSelf).filter((c) => c.type !== 'exemplar');
+   // Recency tiebreak (§7.3.4): within 0.01 similarity, newer first.
+   chrisRanked.sort((a, b) => (Math.abs(a.similarity - b.similarity) < 0.01 ? String(b.date || '').localeCompare(String(a.date || '')) : b.similarity - a.similarity));
+   const chrisSlot = fill(chrisRanked, BUDGET.chris, CHRIS_MAX_CHUNKS);
+ 
+   // Slot 3 — exemplars: Chris-scored only. Prefer same MA type, then similarity.
+-  const exRanked = (await db.searchByEmbedding(embedding, { types: ['exemplar'], sources: ['chris_score'], limit: 12 })).filter(notSelf);
++  const exRanked = (await db.searchByEmbedding(embedding, { types: ['exemplar'], sources: ['chris_score'], authors: ['chris'], limit: 12 })).filter(notSelf);
+   exRanked.sort((a, b) => ((b.metadata?.ma_type === extraction.ma_type) - (a.metadata?.ma_type === extraction.ma_type)) || b.similarity - a.similarity);
+   const exSlot = fill(exRanked, BUDGET.exemplars, EXEMPLAR_MAX);
+ 
+@@ -141,7 +144,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+       ? `## CHRIS (AT Assessor) — GROUND TRUTH. Where Chris and any other source differ, Chris wins. Where two Chris statements differ, the more recent wins; report the pair in chris_conflicts.\n\n${renderChunks(chrisSlot.taken)}`
+       : '## CHRIS (AT Assessor)\n\n(no approved Chris statements retrieved for this session)',
+     exSlot.taken.length
+-      ? `## EXEMPLARS — sessions Chris scored himself. Match his level for comparable work.\n\n${renderChunks(exSlot.taken)}`
++      ? `## EXEMPLARS — sessions Chris scored himself, line by line: what Mark said, then Chris's number. These define the levels. For each line you score, find the exemplar line whose evidence most resembles this session's, start from Chris's number for it, and move off it only for a difference in the evidence that you can name. Cite the exemplar on every line it informed. An exemplar is evidence of level, not of content: never credit this session with something only the exemplar session said.\n\n${renderChunks(exSlot.taken)}`
+       : '## EXEMPLARS\n\n(none yet — Chris-scored exemplars arrive with blind scoring)',
+     `## PSIA REFERENCE\n\n${psiaSlot.taken.length ? renderChunks(psiaSlot.taken) : '(none retrieved)'}`,
+     `## SESSION EXTRACTION — inventory of what Mark actually said and did. Null / false / empty means he did not say it. This is the ONLY evidence of his performance.\n\n${extractionText}`,
+@@ -155,6 +158,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+       total: defSlot.used + chrisSlot.used + exSlot.used + psiaSlot.used + extractionTokens + BUDGET.template,
+     },
+     counts: { definitions: defSlot.taken.length, chris: chrisSlot.taken.length, exemplars: exSlot.taken.length, psia: psiaSlot.taken.length },
++    exemplar_sessions: exSlot.taken.map((c) => c.metadata?.session_id || c.source_ref),
+     chris_under_min: chrisSlot.taken.length < 5,     // §7.1 minimum 5 — a store-size fact until Zoom chunks land, surfaced not hidden
+     self_excluded: !includeSelf && !!sessionId,
+     skills_filter: skills,
+diff --git a/lib/ingest/comment.js b/lib/ingest/comment.js
+new file mode 100644
+index 0000000..34cbeb5
+--- /dev/null
++++ b/lib/ingest/comment.js
+@@ -0,0 +1,76 @@
++// §6.3 — a mentor's comment in an MA History thread → `chris_comment` chunks (author = whoever wrote it).
++// Long comments are split into single points so each retrieves on its own line of the form instead of as one block —
++// what scripts/session4-migrate.mjs did by hand for Chris's 9/17 comment, now in code. His words are kept VERBATIM:
++// paragraphs are grouped, never reworded, never summarised (same standard as §6.2). No model call: tags are keyword tags.
++//
++// Not ingested here: scorecards (either shape — lib/ingest/score.js owns them), Mark's own comments, empty text.
++import { MENTORS, CRITERIA } from '../vocab.js';
++import { isScoreItem } from '../mentorScores.js';
++import { keywordTags, mergeTags } from './psia.js';
++import { normalizeMaType } from '../prompts/extract.js';
++
++const WHOLE_UNDER = 600;      // a short comment is one point
++const MIN_POINT = 120;        // a paragraph shorter than this rides with its neighbour ("Agreed." / "One more thing:")
++const bad = (status, message) => Object.assign(new Error(message), { status });
++
++/** Verbatim single-point split. Pure. Blank lines are the boundaries he chose; fall back to line breaks only for a long unbroken block. */
++export function splitPoints(text) {
++  const t = String(text || '').replace(/\r\n/g, '\n').trim();
++  if (!t) return [];
++  if (t.length <= WHOLE_UNDER) return [t];
++  let paras = t.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
++  if (paras.length === 1) paras = t.split(/\n/).map((p) => p.trim()).filter(Boolean);
++  const out = [];
++  for (const p of paras) {
++    const prev = out[out.length - 1];
++    // a lead-in ("The peer comparison:") goes forward with what it introduces; a short tail goes back
++    if (prev != null && (prev.length < MIN_POINT || /[:–—-]\s*$/.test(prev))) out[out.length - 1] = `${prev}\n\n${p}`;
++    else if (prev != null && p.length < MIN_POINT && !/[:–—-]\s*$/.test(p)) out[out.length - 1] = `${prev}\n\n${p}`;
++    else out.push(p);
++  }
++  return out;
++}
++
++/** Thread item → chunks. Pure. */
++export function commentChunks({ session, item, aiScores = null }) {
++  const author = String(item?.userId || item?.author || '').toLowerCase();
++  if (!MENTORS.includes(author) || !String(item?.text || '').trim() || isScoreItem(item)) return [];
++  const maType = normalizeMaType(session.type || session.context);
++  const header = `Comment by ${author} on MA session ${session.id} (${session.date}; ${maType}; peer: ${session.who || '?'}; task: ${session.activity || '?'})`;
++  const points = splitPoints(item.text);
++  return points.map((point, i) => {
++    const kw = keywordTags(point);
++    return {
++      text: `${header}\n\n${point}`,
++      source: 'chris_comment', source_ref: `session:${session.id}`,
++      criteria: mergeTags([], kw.criteria, CRITERIA), skills: kw.skills,
++      type: /disagree|agree with ai|not\b.*\bneed/i.test(point) ? 'correction' : 'principle',
++      author, date: String(item.timestamp || session.date || '').slice(0, 10) || null, approved: true,
++      metadata: { session_id: session.id, timestamp: item.timestamp || null, part: i, parts: points.length, split_from_comment: points.length > 1, ai_scores_at_comment: aiScores },
++    };
++  });
++}
++
++/**
++ * Ingest one comment, or (no `item`) every mentor comment on the session that the store has never seen.
++ * "Seen" = any chunk, live or superseded, with this session's source_ref and the comment's timestamp — so comments
++ * bootstrap already stored whole, and the 9/17 comment that was split by hand, are not ingested twice.
++ */
++export async function ingestComments({ session, item = null, dryRun = false }, { store }) {
++  if (item && !MENTORS.includes(String(item.userId || '').toLowerCase())) throw bad(422, 'only mentor comments are ingested');
++  const items = item ? [item] : (session.mentorFeedback || []);
++  const ref = `session:${session.id}`;
++  const seen = await store.commentTimestamps(ref);
++  const aiScores = session.parsedSummary?.scores || null;
++  const chunks = [];
++  let skipped = 0;
++  for (const it of items) {
++    const cs = commentChunks({ session, item: it, aiScores });
++    if (!cs.length) continue;
++    if (it.timestamp && seen.has(it.timestamp)) { skipped++; continue; }
++    chunks.push(...cs);
++  }
++  if (dryRun || !chunks.length) return { session_id: session.id, comments_skipped: skipped, would_insert: chunks.length, inserted: 0, titles: chunks.map((c) => c.text.split('\n\n')[1].slice(0, 70)) };
++  const r = await store.insertChunks(chunks);
++  return { session_id: session.id, comments_skipped: skipped, inserted: r.inserted, duplicates: r.skipped };
++}
+diff --git a/lib/ingest/score.js b/lib/ingest/score.js
+new file mode 100644
+index 0000000..f99f3c9
+--- /dev/null
++++ b/lib/ingest/score.js
+@@ -0,0 +1,203 @@
++// §6.4 / §9 — a mentor's scorecard on a session → knowledge.
++//   one `exemplar` chunk   : what Mark said on each form line (from the Step 1 extraction) + the mentor's score for that line
++//   `chris_score` note chunks: his note, one point per chunk, tagged to the lines it speaks to
++// and, for Chris, the session's `past_session` chunk is superseded (§6.7: his score is truth, the AI's is not).
++//
++// What an exemplar is for: the evaluator reads "evidence that looks like THIS got a 2 from Chris" next to the session
++// it is scoring. So the text is organised by form line, evidence first, his number last, and it carries NO AI score,
++// rationale, or rewrite — an exemplar that showed AI numbers would teach the scorer its own bias back.
++//
++// Retrieval: the chunk is embedded on extractionToText(extraction) — the same function that builds the query (§7.2) —
++// not on the rendered text. Like is compared with like, and his numbers don't pull every exemplar into one band.
++//
++// Self-exclusion (§7.3.5) needs nothing new: source_ref is `session:<id>`.
++import { SCORED, SCORED_CRITERIA, MENTORS, SKILLS } from '../vocab.js';
++import { mentorScores } from '../mentorScores.js';
++import { has } from '../extractStats.js';
++import { keywordTags } from './psia.js';
++import { splitPoints } from './comment.js';
++
++export const EXEMPLAR_TOKENS = 1_800;          // three fit the 6K exemplar slot (§7.1) with headers
++export const MIN_EXTRACT_VERSION = 3;          // v1/v2 extractions lack connections[].complete / equipment — re-extract
++const estTokens = (s) => Math.ceil(String(s || '').length / 3.8);
++const clip = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
++const bad = (status, message) => Object.assign(new Error(message), { status });
++const SHORT = { cause_effect: 'Cause & Effect', evaluate: 'Evaluate', prescription: 'Prescription', desired_performances: 'Desired Performances', biomechanics: 'Bio/Physics', equipment: 'Equipment' };
++
++// ── evidence per form line, from the extraction's own fields (no judgment added) ──────────────────
++const state3 = (c) => (c?.state ? c.state : null);
++function evidenceLines(x, line, { quote = 170, maxItems = 8 } = {}) {
++  const L = [];
++  if (line === 'cause_effect') {
++    const st = x.connection_stats;
++    if (st) L.push(`${st.total} causal claims · ${st.complete} complete (movement/fundamental → ski performance → outcome, with the how) · ${st.with_ski_performance} reach ski performance · ${st.with_outcome} reach an outcome · ${st.with_how} state the how · ${st.total - st.unprompted} only under probing`);
++    for (const c of (x.connections || []).slice(0, maxItems)) {
++      const chain = [c.body_movement, c.fundamental, c.linked_fundamental, c.body_consequence, c.ski_performance, c.outcome ? (c.outcome_detail || c.outcome) : null].filter(has).map((t) => clip(t, 70)).join(' → ');
++      const miss = [!has(c.ski_performance) && 'no ski performance', !has(c.outcome) && 'no outcome', c.how_stated !== true && 'no how'].filter(Boolean);
++      L.push(`- [${c.complete ? 'complete' : `partial: ${miss.join(', ')}`}${c.prompted ? ' · prompted' : ''}] ${chain || clip(c.quote, quote)}`);
++    }
++    if ((x.connections || []).length > maxItems) L.push(`- … ${(x.connections.length - maxItems)} more, similar`);
++    if (!(x.connections || []).length) L.push('- none');
++  } else if (line === 'evaluate') {
++    const c = x.comparison_to_intended_outcome || {};
++    L.push(`task described: ${x.task?.described ? `yes — "${clip(x.task.quote, quote)}"` : 'no'}${x.task?.named ? ` (task named: ${clip(x.task.named, 60)})` : ''}`);
++    if (c.vs_intent || c.vs_ideal) {
++      for (const [k, label] of [['vs_intent', "performance vs the skier's intent"], ['vs_ideal', "vs the task's ideal"]]) {
++        const v = c[k] || {}; L.push(`${label}: ${state3(v) || 'absent'}${has(v.quote) ? ` — "${clip(v.quote, quote)}"` : ''}`);
++      }
++    } else L.push(`comparison to intended outcome: ${c.made ? `made — "${clip(c.quote || c.intent_referenced_quote, quote)}"` : 'not made'}`);
++    if ((c.outcome_dimensions || []).length) L.push(`outcome dimensions used: ${c.outcome_dimensions.join(', ')}`);
++    if (x.intent_verification?.asked) L.push(`asked the peer's intent: yes — peer said "${clip((x.intent_verification.peer_answers || []).join(' / '), 120)}"`);
++  } else if (line === 'prescription') {
++    const p = x.prescription || {}, ch = p.chain || {};
++    L.push(`task prescribed: ${clip(p.task, 120) || '—'}`);
++    L.push(`chain — input: ${clip(ch.skier_input, 80) || 'not stated'} · fundamental: ${clip(ch.fundamental_changed, 60) || 'not stated'} · other fundamentals: ${clip(ch.other_fundamentals_affected, 60) || 'not stated'} · ski performance: ${clip(ch.ski_performance_change, 80) || 'not stated'} · outcome: ${clip(ch.outcome_change, 80) || 'not stated'} · tied to the task skied: ${ch.tied_to_observed_task ? 'yes' : 'no'}`);
++    if (has(p.delivery_to_peer)) L.push(`to the peer: "${clip(p.delivery_to_peer, quote + 60)}"`);
++    const d = x.delivery_stats; if (d?.peer_prescription_words) L.push(`peer delivery length: ${d.peer_prescription_words} words, ${d.peer_prescription_sentences} sentences`);
++  } else if (line === 'desired_performances') {
++    const d = x.desired_performance || {};
++    L.push(`ideal performance of the task stated: ${d.stated ? `yes — "${clip(d.quote, quote + 60)}"` : 'no'}`);
++    L.push(`fundamentals described working together: ${(d.fundamentals_blended || []).join(', ') || 'none'}`);
++  } else if (line === 'biomechanics') {
++    const ps = x.physics_concepts || [];
++    for (const p of ps.slice(0, maxItems)) L.push(`- ${clip(p.concept, 70)} (${p.explicit_or_implied}; applied to ${p.applied_to || '?'}${p.prompted ? '; prompted' : ''}) — "${clip(p.quote, quote - 40)}"`);
++    if (!ps.length) L.push('- no physics or biomechanics principle recorded');
++    const hows = (x.connections || []).filter((c) => c.how_stated === true).length; if (hows) L.push(`mechanisms stated inside causal claims: ${hows}`);
++  } else if (line === 'equipment') {
++    const e = x.equipment || {};
++    if (!e.addressed) L.push('not addressed');
++    else {
++      L.push(`addressed${e.prompted ? ' (only under probing)' : ''} — "${clip(e.quote, quote + 60)}"`);
++      if (e.states_effect_on_observed_performance != null) L.push(`states the effect on THIS skier's observed performance: ${e.states_effect_on_observed_performance ? 'yes' : 'no — a recommendation / predicted benefit only'}`);
++      L.push(`linked to biomechanics: ${e.linked_to_biomechanics ? 'yes' : 'no'} · to the desired performance: ${e.linked_to_desired_performance ? 'yes' : 'no'} · to snow/terrain: ${e.linked_to_environment ? 'yes' : 'no'}`);
++    }
++  }
++  return L;
++}
++
++/**
++ * The exemplar text. Pure. Shrinks (shorter quotes, fewer items) until it fits `capTokens`; never truncates mid-line.
++ * @param card  one entry of mentorScores(session)
++ */
++export function renderExemplar({ session, extraction: x, card, date, capTokens = EXEMPLAR_TOKENS }) {
++  const who = card.who[0].toUpperCase() + card.who.slice(1);
++  const head = [
++    `EXEMPLAR — ${who} scored this session himself on the 2026 AT MA/TU form${card.blind ? ' (blind: before seeing any AI score)' : ''}.`,
++    `${date || session.date || '?'} · ${x.ma_type || '?'} · task: ${clip(session.activity || x.task?.named, 80) || '?'} · conditions: ${clip(session.conditions, 60) || '?'}`,
++    `${who}'s result: MA ${card.sections.ma} · TU ${card.sections.tu} · ${card.meets ? 'Meets Standards' : 'Does Not Meet Standards'}`,
++  ];
++  const build = (o) => {
++    const parts = [...head];
++    if (card.note) parts.push(`${who}'s note: ${clip(card.note, o.note)}`);
++    for (const [sec, label] of [['ma', 'MOVEMENT ANALYSIS'], ['tu', 'TECHNICAL UNDERSTANDING']]) {
++      parts.push(`\n${label}`);
++      for (const k of SCORED[sec]) parts.push(`${SHORT[k]} — ${who.toUpperCase()}: ${card.scores[k]}\n  what Mark said:\n${evidenceLines(x, k, o).map((l) => `  ${l}`).join('\n')}`);
++    }
++    return parts.join('\n');
++  };
++  for (const o of [{ quote: 170, maxItems: 8, note: 900 }, { quote: 120, maxItems: 6, note: 600 }, { quote: 80, maxItems: 4, note: 400 }, { quote: 50, maxItems: 3, note: 250 }]) {
++    const t = build(o); if (estTokens(t) <= capTokens) return t;
++  }
++  return build({ quote: 40, maxItems: 2, note: 150 });
++}
++
++/** His note → single-point chunks (same splitter as comments). Each says which lines it speaks to and what he gave them. */
++export function noteChunks({ session, card, date, maType }) {
++  if (!has(card.note)) return [];
++  const who = card.who[0].toUpperCase() + card.who.slice(1);
++  return splitPoints(card.note).map((point, i) => {
++    const kw = keywordTags(point);
++    const lines = kw.criteria.filter((k) => SCORED_CRITERIA.includes(k));
++    const gave = lines.length ? ` He scored ${lines.map((k) => `${SHORT[k]} ${card.scores[k]}`).join(', ')}.` : '';
++    return {
++      text: `${who}'s note with his${card.blind ? ' blind' : ''} scorecard on MA session ${session.id} (${date || session.date}; ${maType}; task: ${session.activity || '?'}).${gave}\n\n${point}`,
++      source: 'chris_score', source_ref: `session:${session.id}`, criteria: kw.criteria, skills: kw.skills, type: 'principle',
++      author: card.who, date, approved: true,
++      metadata: { session_id: session.id, kind: 'score_note', part: i, blind: card.blind, scores: card.scores, title: `Note with scorecard — ${lines.map((k) => SHORT[k]).join(', ') || 'general'}` },
++    };
++  });
++}
++
++const cardKey = (card) => JSON.stringify([SCORED_CRITERIA.map((k) => card.scores[k]), card.note || '', !!card.blind]);
++const cardDate = (card, session) => {
++  const posted = (session.mentorFeedback || []).find((f) => f.timestamp === card.timestamp);
++  return String(posted?.text || '').match(/scorecard\s+(\d{4}-\d{2}-\d{2})/i)?.[1] || String(card.timestamp || '').slice(0, 10) || session.date || null;
++};
++/** The AI score the mentor was blind to. From his submission when the form stored it; else the summary as it stands at first ingest. */
++function aiPin(card, session) {
++  if (card.aiAtSubmit?.scores) return { ...card.aiAtSubmit, pinned_from: 'submit' };
++  const p = session.parsedSummary;
++  if (!p?.scores || p.scores.equipment == null || p.scorer === 'legacy' || p.meta?.scorer === 'legacy') return null;   // old-scorer numbers are never compared with the 2026 form
++  return { form: '2026', scores: Object.fromEntries(SCORED_CRITERIA.map((k) => [k, p.scores[k]])), scorer: p.meta?.scorer || null, scored_at: p.meta?.scored_at || null, pinned_from: 'summary_at_ingest' };
++}
++
++/**
++ * Ingest one mentor's scorecard on one session. Idempotent: same scorecard + same extraction → nothing written.
++ * A changed scorecard (hand-posted lines can be corrected; a blind submission is final in the UI) replaces the old exemplar.
++ * @param deps { store, extractSession, extractionToText, hashText } — injectable for offline tests
++ */
++export async function ingestScore({ session, mentor = 'chris', extraction = null, reextract = false, dryRun = false }, deps) {
++  const { store, extractSession, extractionToText } = deps;
++  mentor = String(mentor).toLowerCase();
++  if (!MENTORS.includes(mentor)) throw bad(400, `mentor must be one of ${MENTORS.join(', ')}`);
++  const card = mentorScores(session)[mentor];
++  if (!card) throw bad(422, `no ${mentor} scorecard on session ${session.id}`);
++  if (SCORED_CRITERIA.some((k) => card.scores[k] == null)) throw bad(422, `${mentor}'s scorecard on ${session.id} is missing a line — an exemplar needs all six`);
++  const ref = `session:${session.id}`;
++  const date = cardDate(card, session);
++
++  const live = await store.liveBySourceRef('chris_score', ref, { author: mentor });
++  const oldEx = live.filter((c) => c.type === 'exemplar');
++  const oldNotes = live.filter((c) => c.metadata?.kind === 'score_note');
++
++  // Extraction: given → the live exemplar's (keeps re-runs stable) → the saved summary's → a fresh Step 1.
++  const usable = (x) => x && typeof x === 'object' && (x.extract_version || 0) >= MIN_EXTRACT_VERSION;
++  let x = null, from = null;
++  if (usable(extraction)) { x = extraction; from = 'given'; }
++  else if (!reextract && usable(oldEx[0]?.metadata?.extraction)) { x = oldEx[0].metadata.extraction; from = 'exemplar'; }
++  else if (!reextract && usable(session.parsedSummary?.extraction)) { x = session.parsedSummary.extraction; from = 'summary'; }
++  else {
++    if (!session.transcript && !Object.keys(session.sections || {}).length) throw bad(422, `session ${session.id} has no transcript to extract`);
++    if (dryRun) return { session_id: session.id, mentor, dryRun: true, would: 'extract (Sonnet) then insert', card };
++    x = await extractSession(session); from = 'extracted';
++  }
++
++  const text = renderExemplar({ session, extraction: x, card, date });
++  const key = cardKey(card);
++  const same = oldEx.find((c) => c.metadata?.card_key === key && c.text === text);
++  const exemplar = {
++    text, embed_text: extractionToText(x),
++    source: 'chris_score', source_ref: ref, criteria: [...SCORED_CRITERIA], skills: (x.skills_referenced || []).filter((s) => SKILLS.includes(s)),
++    type: 'exemplar', author: mentor, date, approved: true,
++    metadata: {
++      session_id: session.id, kind: 'exemplar', title: `${mentor}'s scorecard — ${session.activity || x.task?.named || x.ma_type}`,
++      ma_type: x.ma_type, who: session.who || null, activity: session.activity || null, conditions: session.conditions || null,
++      blind: card.blind, scores: card.scores, sections: card.sections, meets: card.meets, note: card.note || '', posted_by: card.postedBy || null, scored_at: card.timestamp || null,
++      // Pinned once. A re-ingest after a rescore must not move the number he was blind to (§15 "carries ai_at_submit").
++      ai_at_submit: oldEx[0]?.metadata?.ai_at_submit || aiPin(card, session),
++      card_key: key, extraction: x, extract_version: x.extract_version || null, extraction_from: from,
++    },
++  };
++  const notes = noteChunks({ session, card, date, maType: x.ma_type });
++  const report = { session_id: session.id, mentor, blind: card.blind, scores: card.scores, extraction_from: from, exemplar_tokens: estTokens(text), notes: notes.length };
++  if (dryRun) return { ...report, dryRun: true, would: same ? 'nothing (unchanged)' : oldEx.length ? 'replace exemplar' : 'insert exemplar', text };
++
++  let exemplarId = same?.id || null, inserted = 0;
++  if (!same) {
++    const r = await store.insertChunks([exemplar]);
++    inserted += r.inserted;
++    exemplarId = r.ids?.[0] || (await store.liveBySourceRef('chris_score', ref, { author: mentor })).filter((c) => c.type === 'exemplar' && c.metadata?.card_key === key).pop()?.id;
++    if (!exemplarId) throw new Error('exemplar insert returned no id');
++    for (const o of oldEx) if (o.id !== exemplarId) await store.supersede(o.id, exemplarId);
++  }
++  if (notes.length) inserted += (await store.insertChunks(notes)).inserted;
++  const keep = new Set(notes.map((n) => n.text.trim()));
++  let retired = 0;
++  for (const o of oldNotes) if (!keep.has(o.text.trim())) { await store.supersede(o.id, exemplarId); retired++; }
++
++  // §6.7 — once Chris has scored it, his exemplar supersedes the AI-scored past_session chunk. Other mentors' scorecards don't.
++  let past = 0;
++  if (mentor === 'chris') for (const p of await store.liveBySourceRef('past_session', ref)) { await store.supersede(p.id, exemplarId); past++; }
++
++  return { ...report, exemplar_id: exemplarId, inserted, unchanged: !!same, replaced: same ? 0 : oldEx.length, notes_retired: retired, past_session_superseded: past };
++}
+diff --git a/lib/mentorScores.js b/lib/mentorScores.js
+new file mode 100644
+index 0000000..65df505
+--- /dev/null
++++ b/lib/mentorScores.js
+@@ -0,0 +1,60 @@
++// Mentor scorecards — the ONE reader, shared by the browser (src/lib/scorecard.js re-exports everything here) and the
++// API (ingest/score, agreement). Pure: no React, no SDK, no node built-ins. Moved out of src/lib/scorecard.js in
++// session 6 so the server reads a scorecard exactly the way the screen does.
++//
++// Two shapes count as a scorecard in a session's mentorFeedback thread:
++//   - the blind form's structured item: { userId, kind: "blind_score", scores, note, blind, ai_at_submit, timestamp, text }
++//   - a hand-posted line in the same text format ("Chris scorecard 2026-09-17 (2026 form): MA: cause_effect 2, …"),
++//     attributed to the mentor it names, even when Mark posted it on his behalf.
++import { SCORED, SCORED_CRITERIA, PASS, MENTORS } from './vocab.js';
++
++/** A score is an integer 1–6 or it is null. 0, "", NaN, "4.5abc" → null. */
++export const cleanScore = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 1 && n <= 6 ? Math.round(n) : null; };
++const round2 = (n) => Math.round(n * 100) / 100;
++
++/** Section averages + pass for a { line: score } map on the 2026 form. Null wherever a line is missing. */
++export function formMath(scores) {
++  const avg = (keys) => { const xs = keys.map((k) => cleanScore(scores?.[k])); return xs.every((x) => x != null) ? round2(xs.reduce((a, b) => a + b, 0) / xs.length) : null; };
++  const ma = avg(SCORED.ma), tu = avg(SCORED.tu);
++  return { sections: { ma, tu }, meets: ma != null && tu != null ? ma >= PASS && tu >= PASS : null };
++}
++
++const KEY_RE = new RegExp(`\\b(${[...SCORED_CRITERIA, 'needs_safety', 'behavior_management'].join('|')})\\s*[:=]?\\s*([1-6])\\b`, 'gi');
++
++/** The one text format for a mentor scorecard in the comment thread — what Mark posted by hand for 7n6ry6d, and what the blind form writes. */
++export function formatScoreLine({ who, date, scores, blind, note }) {
++  const f = (keys) => keys.map((k) => `${k} ${scores[k]}`).join(', ');
++  const m = formMath(scores);
++  return `${who} scorecard ${date} (2026 form${blind ? ', scored blind' : ''}): MA: ${f(SCORED.ma)} (avg ${m.sections.ma}) | TU: ${f(SCORED.tu)} (avg ${m.sections.tu}) | Overall: ${m.meets ? 'Meets Standards' : 'Does Not Meet Standards'}${note ? ` | Note: ${note}` : ''}`;
++}
++export function parseScoreLine(text) {
++  if (!/scorecard/i.test(text || '')) return null;
++  const scores = {}; let m; KEY_RE.lastIndex = 0;
++  while ((m = KEY_RE.exec(text))) scores[m[1].toLowerCase()] = Number(m[2]);
++  return SCORED_CRITERIA.every((k) => scores[k] != null) ? scores : null;
++}
++/** A hand-posted line may carry a note after "| Note:". */
++const noteOf = (text) => String(text || '').match(/\|\s*Note:\s*([\s\S]+)$/i)?.[1]?.trim() || '';
++
++/** True for any thread item that IS a scorecard (either shape). Comment ingestion skips these; the score path owns them. */
++export const isScoreItem = (f) => !!f && ((f.kind === 'blind_score' && !!f.scores) || !!parseScoreLine(f.text));
++
++/** Every mentor scorecard on a session, newest per mentor. Structured items (blind form) and hand-posted lines both count. */
++export function mentorScores(session) {
++  const out = {};
++  for (const f of session?.mentorFeedback || []) {
++    let who = String(f.userId || '').toLowerCase(), scores = null, blind = false, note = f.note || '';
++    if (f.kind === 'blind_score' && f.scores) { scores = f.scores; blind = f.blind !== false; }
++    else {
++      scores = parseScoreLine(f.text);
++      blind = !!scores && /scored blind/i.test(f.text);              // a verbal scorecard posted on his behalf can still be a blind one (7uk7lnh, 9/18 call)
++      const named = scores && String(f.text).match(/^\s*(\w+)\s+scorecard/i)?.[1]?.toLowerCase();
++      if (named && MENTORS.includes(named)) who = named;             // "Chris scorecard … posted by Mark" belongs to Chris
++      if (scores && !note) note = noteOf(f.text);
++    }
++    if (!scores || !MENTORS.includes(who)) continue;
++    const clean = Object.fromEntries(SCORED_CRITERIA.map((k) => [k, cleanScore(scores[k])]));
++    out[who] = { who, scores: clean, ...formMath(clean), blind, note, timestamp: f.timestamp || null, postedBy: f.userId, aiAtSubmit: f.ai_at_submit || null };
++  }
++  return out;
++}
+diff --git a/lib/store.js b/lib/store.js
+index 0e0330d..6e0bbd8 100644
+--- a/lib/store.js
++++ b/lib/store.js
+@@ -43,6 +43,10 @@ export function normalizeChunk(c) {
+     approved: c.approved ?? APPROVED_DEFAULT[c.source] ?? true,
+     metadata: c.metadata ?? {},
+     text_hash: hashText(c.text),
++    // Not a column. When set, this is what gets embedded instead of `text` (exemplars: the stored text carries Chris's
++    // numbers for the evaluator to read, but retrieval must match on the session's substance — session 1 showed that
++    // scores in embedded text compress every session into one similarity band). Stripped before insert.
++    ...(c.embed_text ? { embed_text: String(c.embed_text) } : {}),
+   };
+ }
+ 
+@@ -65,11 +69,11 @@ export async function insertChunks(chunks, { dryRun = false } = {}) {
+   const fresh = rows.filter((r) => !have.has(`${r.source}|${r.source_ref}|${r.text_hash}`));
+   if (dryRun || !fresh.length) return { inserted: 0, skipped: rows.length - fresh.length, wouldInsert: fresh.length };
+ 
+-  const vectors = await embedDocuments(fresh.map((r) => r.text));
+-  const payload = fresh.map((r, i) => ({ ...r, embedding: vectors[i] }));
+-  const { error: e2 } = await client().from('chunks').insert(payload);
++  const vectors = await embedDocuments(fresh.map((r) => r.embed_text || r.text));
++  const payload = fresh.map(({ embed_text, ...r }, i) => ({ ...r, embedding: vectors[i] }));
++  const { data: made, error: e2 } = await client().from('chunks').insert(payload).select('id, text_hash');
+   if (e2) throw e2;
+-  return { inserted: fresh.length, skipped: rows.length - fresh.length };
++  return { inserted: fresh.length, skipped: rows.length - fresh.length, ids: (made || []).map((m) => m.id), rows: made || [] };
+ }
+ 
+ /**
+@@ -137,6 +141,32 @@ export async function counts() {
+   return out;
+ }
+ 
++/** Live (not superseded) chunks of one source under one source_ref. Used by the continuous pipelines (§6.3, §6.4, §6.7). */
++export async function liveBySourceRef(source, sourceRef, { author = null } = {}) {
++  let q = client().from('chunks').select('id, text, text_hash, source, source_ref, criteria, skills, type, author, date, approved, metadata, created_at')
++    .eq('source', source).eq('source_ref', sourceRef).is('superseded_by', null).order('created_at', { ascending: true });
++  if (author) q = q.eq('author', author);
++  const { data, error } = await q;
++  if (error) throw error;
++  return data || [];
++}
++
++/** Timestamps of every thread comment already in the store for a session — live OR superseded (a hand-split comment's whole-text chunk is superseded, and must still count as seen). */
++export async function commentTimestamps(sourceRef) {
++  const { data, error } = await client().from('chunks').select('metadata').eq('source', 'chris_comment').eq('source_ref', sourceRef);
++  if (error) throw error;
++  return new Set((data || []).map((r) => r.metadata?.timestamp).filter(Boolean));
++}
++
++/** Live Chris-scored (or any mentor's) exemplars, metadata only — agreement (§9) reads the AI score pinned at ingest from here. */
++export async function listExemplars({ author = null } = {}) {
++  let q = client().from('chunks').select('id, source_ref, author, date, metadata').eq('source', 'chris_score').eq('type', 'exemplar').is('superseded_by', null);
++  if (author) q = q.eq('author', author);
++  const { data, error } = await q;
++  if (error) throw error;
++  return data || [];
++}
++
+ // ── Pending chunks + approval (§5.6, §6.2) — session 2 ───────────────────────────────────────────
+ const COLS = 'id, text, source, source_ref, criteria, skills, type, author, date, approved, superseded_by, metadata, created_at';
+ const bad = (status, message) => Object.assign(new Error(message), { status });
+diff --git a/lib/vocab.js b/lib/vocab.js
+index 6e0f411..6f817a3 100644
+--- a/lib/vocab.js
++++ b/lib/vocab.js
+@@ -41,5 +41,8 @@ export const MA_TYPES = ['at_exam', 'written', 'scenario', 'reverse', 'compare',
+ export const SOURCES = ['psia_doc', 'chris_zoom', 'chris_comment', 'chris_score', 'mentor_assessment', 'web', 'past_session'];
+ export const TYPES = ['definition', 'principle', 'correction', 'exemplar', 'physics', 'mental_model', 'idp_task'];
+ 
++/** Who may post a scorecard (§9). Chris is ground truth; Gates and Mike use the same form, `author` differs (§17). */
++export const MENTORS = ['chris', 'gates', 'mike'];
++
+ /** Pass rule: MA section average ≥ 4 AND TU section average ≥ 4. */
+ export const PASS = 4;
+diff --git a/package.json b/package.json
+index 9fb6f2a..82a4348 100644
+--- a/package.json
++++ b/package.json
+@@ -18,7 +18,9 @@
+     "test:exam": "node scripts/selftest-exam.mjs",
+     "test:history": "node scripts/selftest-history.mjs",
+     "zoom": "node scripts/zoom.mjs",
+-    "test:zoom": "node scripts/selftest-zoom.mjs"
++    "test:zoom": "node scripts/selftest-zoom.mjs",
++    "ingest:scores": "node scripts/ingest-scores.mjs",
++    "test:ingest": "node scripts/selftest-ingest.mjs"
+   },
+   "dependencies": {
+     "@anthropic-ai/sdk": "^0.52.0",
+diff --git a/scripts/ingest-scores.mjs b/scripts/ingest-scores.mjs
+new file mode 100644
+index 0000000..e316e71
+--- /dev/null
++++ b/scripts/ingest-scores.mjs
+@@ -0,0 +1,56 @@
++// Backfill / catch-up for the continuous pipelines (§6.3, §6.4). Same code path as /api/ingest/score and /api/ingest/comment.
++//   npm run ingest:scores                      → every mentor scorecard in MASessions → exemplar (+ note chunks); then agreement
++//   npm run ingest:scores -- 7uk7lnh           → one session
++//   flags: --dry (print the exemplar text, write nothing) · --reextract (fresh Step 1 even if one is stored)
++//          --comments (also ingest mentor comments the store has never seen) · --mentor gates
++// Idempotent. Safe to re-run after every call with Chris.
++import 'dotenv/config';
++import { mkdirSync, writeFileSync } from 'node:fs';
++import { getMaSessions } from '../lib/sheet.js';
++import * as store from '../lib/store.js';
++import { ingestScore } from '../lib/ingest/score.js';
++import { ingestComments } from '../lib/ingest/comment.js';
++import { extractSession, extractionToText } from '../lib/prompts/extract.js';
++import { mentorScores } from '../lib/mentorScores.js';
++import { agreement } from '../lib/agreement.js';
++import { SCORED_CRITERIA, MENTORS } from '../lib/vocab.js';
++
++const args = process.argv.slice(2);
++const flag = (n) => args.includes(n);
++const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
++const DRY = flag('--dry'), only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--mentor').map((x) => x.replace(/^ma_/, ''));
++const mentors = opt('--mentor') ? [opt('--mentor').toLowerCase()] : MENTORS;
++
++const sessions = (await getMaSessions()).filter((s) => !only.length || only.includes(s.id));
++if (only.length && sessions.length !== only.length) { console.error(`not found: ${only.filter((id) => !sessions.some((s) => s.id === id)).join(', ')}`); process.exit(1); }
++mkdirSync('out', { recursive: true });
++
++let n = 0;
++for (const s of sessions) {
++  const cards = mentorScores(s);
++  for (const m of mentors.filter((k) => cards[k])) {
++    n++;
++    console.log(`\n── ${s.id} · ${s.date} · ${s.activity || s.type} · ${m}: ${SCORED_CRITERIA.map((k) => cards[m].scores[k]).join('/')}${cards[m].blind ? ' · blind' : ' · not blind'}`);
++    const r = await ingestScore({ session: s, mentor: m, reextract: flag('--reextract'), dryRun: DRY }, { store, extractSession, extractionToText });
++    if (r.text) { writeFileSync(`out/exemplar-${s.id}-${m}.txt`, r.text); console.log(`  would: ${r.would} · ${r.exemplar_tokens} tok · extraction from ${r.extraction_from} · text → out/exemplar-${s.id}-${m}.txt`); }
++    else if (r.dryRun) console.log(`  would: ${r.would}`);
++    else console.log(`  exemplar ${String(r.exemplar_id).slice(0, 8)} · ${r.unchanged ? 'unchanged' : `inserted (replaced ${r.replaced})`} · ${r.exemplar_tokens} tok · extraction from ${r.extraction_from} · notes ${r.notes} · past_session superseded ${r.past_session_superseded}`);
++  }
++  if (flag('--comments')) {
++    const c = await ingestComments({ session: s, dryRun: DRY }, { store });
++    if (c.inserted || c.would_insert) console.log(`  ${s.id} comments: ${DRY ? `would insert ${c.would_insert}` : `inserted ${c.inserted}`} · already seen ${c.comments_skipped}`);
++  }
++}
++if (!n) console.log('no mentor scorecards found on the selected sessions');
++
++// Agreement, from the same data (§9). Always over ALL sessions, not just the ones selected above.
++const all = only.length ? await getMaSessions() : sessions;
++const pins = Object.fromEntries((await store.listExemplars({ author: 'chris' })).filter((e) => e.metadata?.ai_at_submit?.scores).map((e) => [String(e.metadata.session_id), e.metadata.ai_at_submit]));
++const a = agreement(all, { mentor: 'chris', pins });
++const line = (t) => `${t.exact}/${t.n} exact (${t.exact_pct ?? '–'}%) · ${t.within_one}/${t.n} within one (${t.within_one_pct ?? '–'}%) · mean Δ ${t.mean_delta ?? '–'}`;
++console.log(`\n── agreement with chris (targets: ≥${a.targets.exact_pct}% exact, ≥${a.targets.within_one_pct}% within one)`);
++console.log(`  blind     (${a.blind.sessions} sessions): ${line(a.blind.overall)}`);
++console.log(`  not blind (${a.not_blind.sessions} sessions): ${line(a.not_blind.overall)}`);
++for (const k of SCORED_CRITERIA) { const t = a.blind.per_criterion[k]; if (t.n) console.log(`    ${k.padEnd(21)} ${line(t)}`); }
++for (const e of a.excluded) console.log(`  excluded ${e.session_id}: ${e.reason}`);
++for (const r of a.sessions.filter((x) => x.unpinned)) console.log(`  note ${r.session_id}: compared with the CURRENT summary (no score pinned yet — ingest pins it)`);
+diff --git a/scripts/score.mjs b/scripts/score.mjs
+index afd35db..491ae83 100644
+--- a/scripts/score.mjs
++++ b/scripts/score.mjs
+@@ -1,17 +1,20 @@
+ // Score sessions from the CLI through the same path as /api/score.
+ //   npm run score -- bzfutxv q5omsst 7n6ry6d          → prints a table, writes out/score-<id>.json
+ //   npm run score -- 7n6ry6d --compare "2,2,2,2,2,1"  → within-one check vs a scorecard (form order: CE,Ev,Rx,DP,Bio,Eq)
++//   npm run score -- 7uk7lnh --compare chris          → same, against Chris's scorecard on the session as read from the Sheet
+ //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
+ import 'dotenv/config';
+ import { mkdirSync, writeFileSync } from 'node:fs';
+ import { getMaSessions } from '../lib/sheet.js';
+ import { scoreSession } from '../lib/score.js';
+ import { SCORED_CRITERIA } from '../lib/vocab.js';
++import { mentorScores } from '../lib/mentorScores.js';
+ 
+ const args = process.argv.slice(2);
+ const flag = (n) => args.includes(n);
+ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
+-const compare = opt('--compare')?.split(',').map(Number) || null;
++const compareArg = opt('--compare');
++const fixed = compareArg && /\d/.test(compareArg) ? compareArg.split(',').map(Number) : null;
+ const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare').map((x) => x.replace(/^ma_/, ''));
+ if (!ids.length) { console.error('usage: npm run score -- <sessionId> [...] [--compare "2,2,2,2,2,1"] [--debug] [--include-self]'); process.exit(1); }
+ 
+@@ -21,6 +24,9 @@ let fail = false;
+ for (const id of ids) {
+   const s = sessions.find((x) => x.id === id);
+   if (!s) { console.error(`${id}: not found`); fail = true; continue; }
++  const card = compareArg && !fixed ? mentorScores(s)[compareArg.toLowerCase()] : null;
++  if (compareArg && !fixed && !card) { console.error(`${id}: no ${compareArg} scorecard on this session`); fail = true; continue; }
++  const compare = fixed || (card ? SCORED_CRITERIA.map((k) => card.scores[k]) : null);
+   console.log(`\n── ${id} · ${s.date} · ${s.type} · ${s.who} · ${s.activity}`);
+   const r = await scoreSession(s, { debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
+   writeFileSync(`out/score-${id}.json`, JSON.stringify(r, null, 2));
+@@ -31,12 +37,15 @@ for (const id of ids) {
+   }
+   console.log(`  MA ${r.section_averages.ma} · TU ${r.section_averages.tu} · ${r.meets_standards ? 'Meets' : 'Does Not Meet'} Standards`);
+   const m = r.meta.context;
+-  console.log(`  context ${m.tokens.total} tok · chris ${m.counts.chris} · exemplars ${m.counts.exemplars} · psia ${m.counts.psia} · ${Math.round(r.meta.ms.total / 1000)}s`);
++  const exCited = Object.entries(r.citation_details).filter(([, d]) => d.type === 'exemplar').map(([c]) => c);
++  console.log(`  context ${m.tokens.total} tok · chris ${m.counts.chris} · exemplars ${m.counts.exemplars}${m.exemplar_sessions?.length ? ` (${m.exemplar_sessions.join(', ')})` : ''} · exemplar cited: ${exCited.length ? exCited.join(' ') : 'NO'} · psia ${m.counts.psia} · ${Math.round(r.meta.ms.total / 1000)}s`);
+   const cs = r.extraction.connection_stats; if (cs) console.log(`  connections ${cs.total} · complete ${cs.complete} · ski-perf ${cs.with_ski_performance} · outcome ${cs.with_outcome} · how ${cs.with_how}`);
+   if (r.quality.ladder_skipped?.length) console.log(`  LADDER SKIPPED on: ${r.quality.ladder_skipped.join(', ')}`);
+   if (r.quality.guards_applied.length) console.log(`  guards: ${r.quality.guards_applied.join(' | ')}`);
+   if (r.quality.citations_invalid || r.quality.criteria_without_citation.length) console.log(`  citation issues: invalid=${r.quality.citations_invalid} uncited=${r.quality.criteria_without_citation.join(',') || '–'}`);
+   if (compare) {
++    const exact = SCORED_CRITERIA.filter((k, i) => r.scores[k] === compare[i]).length;
++    console.log(`  exact ${exact}/6 · within one ${SCORED_CRITERIA.filter((k, i) => Math.abs(r.scores[k] - compare[i]) <= 1).length}/6`);
+     const worst = Math.max(...SCORED_CRITERIA.map((k, i) => Math.abs(r.scores[k] - compare[i])));
+     console.log(`  within-one of scorecard: ${worst <= 1 ? 'PASS' : 'FAIL'} (max |Δ| = ${worst})`);
+     if (worst > 1) fail = true;
+diff --git a/scripts/selftest-ingest.mjs b/scripts/selftest-ingest.mjs
+new file mode 100644
+index 0000000..b114d78
+--- /dev/null
++++ b/scripts/selftest-ingest.mjs
+@@ -0,0 +1,146 @@
++// Offline checks for session 6: scorecard → exemplar, comment splitting, agreement, exemplar retrieval in the assembler.
++// No network, no keys.   npm run test:ingest
++import assert from 'node:assert/strict';
++import { renderExemplar, noteChunks, ingestScore, EXEMPLAR_TOKENS } from '../lib/ingest/score.js';
++import { splitPoints, commentChunks, ingestComments } from '../lib/ingest/comment.js';
++import { agreement } from '../lib/agreement.js';
++import { mentorScores, formatScoreLine } from '../lib/mentorScores.js';
++import { assemble, BUDGET, estTokens } from '../lib/assembler.js';
++import { extractionToText } from '../lib/prompts/extract.js';
++import { connectionStats } from '../lib/extractStats.js';
++import { normalizeChunk, hashText } from '../lib/store.js';
++import { SCORED_CRITERIA } from '../lib/vocab.js';
++const SC = await import('../src/lib/scorecard.js');
++
++// ── fixtures: the two real scorecards (§16, 9/17 and 9/18) ──
++const conn = (o) => ({ phase: 'initiation', section: 'presentation', body_movement: 'whole-body rotation', fundamental: 'rotary', linked_fundamental: null, body_consequence: 'weight moves inside', ski_performance: null, outcome: null, outcome_detail: null, how_stated: false, how_quote: null, prompted: false, quote: 'whole body rotation caused the ski to rapidly pivot to an edge', ...o });
++const mkX = (o = {}) => { const x = {
++  ma_type: 'at_exam', extract_version: 3, task: { named: 'Fall line bumps', described: false, quote: null },
++  desired_performance: { stated: false, quote: null, fundamentals_blended: [] }, observations: [], skills_referenced: ['rotary', 'edging', 'bogus'],
++  connections: [conn({}), conn({ ski_performance: 'ski pivots to an edge', outcome: 'turn_shape', outcome_detail: 'little shape at the top', how_stated: true, how_quote: 'because the legs cannot turn under a rotating pelvis' }), conn({ prompted: true, ski_performance: 'tails skid' })],
++  physics_concepts: [{ concept: 'edge platform', explicit_or_implied: 'implied', applied_to: 'observed_skier', prompted: false, quote: 'no platform to push against' }],
++  equipment: { addressed: true, prompted: false, quote: 'a softer ski would let her bend it in the trough', linked_to_biomechanics: false, linked_to_desired_performance: true, linked_to_environment: true },
++  intent_verification: { asked: true, questions: ['What were you going for?'], peer_answers: ['a guided ski from the top'] },
++  comparison_to_intended_outcome: { made: true, intent_referenced_quote: 'you wanted a guided ski', outcome_dimensions: ['turn_shape'], quote: 'you wanted a guided ski and the top of the turn was pivoted' },
++  prescription: { task: 'pivot slips to guided entries', delivery_to_peer: 'Keep your zipper facing the fall line and steer both feet from the top.', peer_restated: 'Focus on initiating with a guided ski', chain: { skier_input: 'steer both feet', fundamental_changed: 'rotary', other_fundamentals_affected: null, ski_performance_change: null, outcome_change: null, tied_to_observed_task: false } },
++  verbatim_key_phrases: ['rapidly pivot to an edge'], delivery_stats: { peer_prescription_words: 14, peer_prescription_sentences: 1 }, ...o };
++  x.connection_stats = connectionStats(x); return x; };
++const ai7uk = { cause_effect: 3, evaluate: 4, prescription: 3, desired_performances: 2, biomechanics: 3, equipment: 4, describe: 4, communication: 3 };
++const ai7n6 = { cause_effect: 3, evaluate: 1, prescription: 3, desired_performances: 1, biomechanics: 2, equipment: 1, describe: 3, communication: 3 };
++const sum = (scores, extra = {}) => ({ scores, meta: { scorer: 'v2-rag-2', scored_at: '2026-09-18T20:00:00Z' }, ...extra });
++const s7uk = { id: '7uk7lnh', date: '2026-09-18', type: 'AT MA Exam', who: 'Sam', activity: 'Fall Line Bumps', conditions: 'soft bumps', sections: { presentation: 'x' }, parsedSummary: sum(ai7uk),
++  mentorFeedback: [{ userId: 'mark', timestamp: '2026-09-19T10:00:00Z', text: 'Chris scorecard 2026-09-18 (2026 form, scored blind), posted by Mark from the 9/18 call: MA: cause_effect 2, evaluate 2, prescription 3 | TU: desired_performances 2, biomechanics 3, equipment 3' }] };
++const s7n6 = { id: '7n6ry6d', date: '2026-09-16', type: 'AT MA Exam', who: 'Ben', activity: 'Dynamic parallel, variable snow', conditions: 'variable', sections: { presentation: 'y' }, parsedSummary: sum(ai7n6, { extraction: mkX({ equipment: { addressed: false } }) }),
++  mentorFeedback: [
++    { userId: 'chris', timestamp: '2026-09-17T13:16:41.509Z', text: 'Lacks connection.' },
++    { userId: 'mark', timestamp: '2026-09-17T15:00:00Z', text: 'Chris scorecard 2026-09-17 (2026 form): MA: cause_effect 2, evaluate 2, prescription 2 (avg 2) | TU: desired_performances 2, biomechanics 2, equipment 1 (avg 1.67) | Overall: Does Not Meet Standards' }] };
++
++// ── 1. one reader, server and browser ──
++assert.deepEqual(SC.mentorScores(s7uk), mentorScores(s7uk), 'src/lib/scorecard re-exports the lib reader');
++const c7uk = mentorScores(s7uk).chris, c7n6 = mentorScores(s7n6).chris;
++assert.deepEqual(SCORED_CRITERIA.map((k) => c7uk.scores[k]), [2, 2, 3, 2, 3, 3]); assert.equal(c7uk.blind, true); assert.equal(c7uk.postedBy, 'mark');
++assert.deepEqual(SCORED_CRITERIA.map((k) => c7n6.scores[k]), [2, 2, 2, 2, 2, 1]); assert.equal(c7n6.blind, false);
++const withNote = mentorScores({ mentorFeedback: [{ userId: 'mark', text: `${formatScoreLine({ who: 'Chris', date: '2026-09-20', scores: c7uk.scores, blind: true, note: 'Evaluate needs the ideal.' })}` }] }).chris;
++assert.equal(withNote.note, 'Evaluate needs the ideal.', 'note parsed from a hand-posted line');
++
++// ── 2. the exemplar text ──
++const x = mkX();
++const text = renderExemplar({ session: s7uk, extraction: x, card: c7uk, date: '2026-09-18' });
++for (const want of ['Cause & Effect — CHRIS: 2', 'Evaluate — CHRIS: 2', 'Equipment — CHRIS: 3', 'blind', '3 causal claims · 1 complete', '[partial: no ski performance, no outcome, no how]', '[complete]', 'prompted', 'MA 2.33 · TU 2.67 · Does Not Meet Standards', 'tied to the task skied: no']) assert.ok(text.includes(want), `exemplar text has "${want}"`);
++assert.ok(!/\bAI\b(?! score\))/.test(text.replace('before seeing any AI score', '')), 'no AI numbers or mention beyond the blind flag');
++assert.ok(!text.includes('Focus on initiating with a guided ski'), "the peer's restatement is not shown as Mark's prescription");
++const big = mkX({ connections: Array.from({ length: 30 }, (_, i) => conn({ quote: 'q '.repeat(200), body_movement: `movement ${i} `.repeat(12) })), physics_concepts: Array.from({ length: 20 }, () => ({ concept: 'c '.repeat(60), explicit_or_implied: 'explicit', applied_to: 'both', quote: 'z '.repeat(150) })) });
++const bigText = renderExemplar({ session: s7uk, extraction: big, card: { ...c7uk, note: 'n '.repeat(2000) }, date: '2026-09-18' });
++assert.ok(estTokens(bigText) <= EXEMPLAR_TOKENS, `oversized extraction still fits the exemplar cap (${estTokens(bigText)})`);
++assert.ok(3 * (EXEMPLAR_TOKENS + 40) <= BUDGET.exemplars, 'three exemplars fit the slot');
++const v4 = renderExemplar({ session: s7uk, extraction: mkX({ comparison_to_intended_outcome: { vs_intent: { state: 'made', quote: 'you wanted guided; it was pivoted' }, vs_ideal: { state: 'absent', quote: null }, outcome_dimensions: ['turn_shape'] } }), card: c7uk });
++assert.ok(v4.includes("performance vs the skier's intent: made") && v4.includes("vs the task's ideal: absent"), 'renders the two-comparison shape too');
++
++// ── 3. ingest against an in-memory store ──
++function memStore() {
++  const rows = []; let n = 0;
++  return { rows,
++    liveBySourceRef: async (source, ref, { author = null } = {}) => rows.filter((r) => r.source === source && r.source_ref === ref && !r.superseded_by && (!author || r.author === author)),
++    insertChunks: async (chunks) => { const made = []; let skipped = 0; for (const c of chunks.map(normalizeChunk)) { if (rows.some((r) => r.source === c.source && r.source_ref === c.source_ref && r.text_hash === c.text_hash)) { skipped++; continue; } const row = { ...c, id: `${String(++n).padStart(8, '0')}-0000-0000-0000-000000000000`, superseded_by: null }; rows.push(row); made.push(row); } return { inserted: made.length, skipped, ids: made.map((m) => m.id) }; },
++    supersede: async (oldId, newId) => { rows.find((r) => r.id === oldId).superseded_by = newId; },
++    commentTimestamps: async (ref) => new Set(rows.filter((r) => r.source === 'chris_comment' && r.source_ref === ref).map((r) => r.metadata?.timestamp).filter(Boolean)),
++  };
++}
++const db = memStore();
++let extractCalls = 0;
++const deps = { store: db, extractionToText, extractSession: async () => { extractCalls++; return mkX(); } };
++await db.insertChunks([{ text: 'old extraction', source: 'past_session', source_ref: 'session:7uk7lnh', type: 'exemplar', author: 'mark' }]);
++
++const r1 = await ingestScore({ session: s7uk }, deps);
++assert.equal(extractCalls, 1, '7uk7lnh has no stored extraction (it was shed) → Step 1 runs once'); assert.equal(r1.extraction_from, 'extracted');
++assert.equal(r1.inserted, 1); assert.equal(r1.past_session_superseded, 1);
++const ex = db.rows.find((r) => r.id === r1.exemplar_id);
++assert.equal(ex.source, 'chris_score'); assert.equal(ex.type, 'exemplar'); assert.equal(ex.author, 'chris'); assert.equal(ex.source_ref, 'session:7uk7lnh'); assert.equal(ex.approved, true); assert.equal(ex.date, '2026-09-18');
++assert.equal(ex.embed_text, extractionToText(mkX()), 'embedded on the extraction text — the same thing the query is');
++assert.deepEqual(ex.skills, ['rotary', 'edging'], 'invalid skill tags dropped'); assert.equal(ex.metadata.blind, true);
++assert.deepEqual(ex.metadata.ai_at_submit.scores, Object.fromEntries(SCORED_CRITERIA.map((k) => [k, ai7uk[k]])), 'AI score pinned at first ingest'); assert.equal(ex.metadata.ai_at_submit.pinned_from, 'summary_at_ingest');
++
++const r2 = await ingestScore({ session: s7uk }, deps);
++assert.equal(r2.unchanged, true); assert.equal(r2.inserted, 0); assert.equal(extractCalls, 1, 're-run reuses the exemplar\'s extraction: no model call, nothing written');
++
++const rescored = { ...s7uk, parsedSummary: sum({ ...ai7uk, evaluate: 2 }), mentorFeedback: [{ ...s7uk.mentorFeedback[0], text: s7uk.mentorFeedback[0].text.replace('equipment 3', 'equipment 3 | Note: Evaluate: he never set her intent against the ideal for bumps.\n\nEquipment was a recommendation, not an effect on what she did.') }] };
++const r3 = await ingestScore({ session: rescored }, deps);
++assert.equal(r3.replaced, 1, 'a changed scorecard replaces the exemplar'); assert.equal(db.rows.find((r) => r.id === r1.exemplar_id).superseded_by, r3.exemplar_id);
++assert.equal(db.rows.find((r) => r.id === r3.exemplar_id).metadata.ai_at_submit.scores.evaluate, 4, 'the pinned AI score survives a rescore + re-ingest');
++assert.equal(r3.notes, 1, 'a note under 600 chars is one point');
++const note = db.rows.find((r) => r.metadata?.kind === 'score_note');
++assert.ok(note.text.includes('He scored') && note.text.includes('Evaluate 2, Equipment 3') && note.criteria.includes('evaluate') && note.criteria.includes('equipment') && note.type === 'principle');
++assert.equal((await db.liveBySourceRef('chris_score', 'session:7uk7lnh')).filter((c) => c.type === 'exemplar').length, 1, 'exactly one live exemplar per mentor per session');
++
++const r4 = await ingestScore({ session: s7n6 }, deps);
++assert.equal(r4.extraction_from, 'summary'); assert.equal(extractCalls, 1); assert.ok(db.rows.find((r) => r.id === r4.exemplar_id).text.includes('Equipment — CHRIS: 1') && db.rows.find((r) => r.id === r4.exemplar_id).text.includes('not addressed'));
++await assert.rejects(ingestScore({ session: { ...s7n6, mentorFeedback: [] } }, deps), /no chris scorecard/);
++await assert.rejects(ingestScore({ session: s7n6, mentor: 'mark' }, deps), /mentor must be/);
++const gatesS = { ...s7n6, id: 'gg', mentorFeedback: [{ userId: 'gates', kind: 'blind_score', scores: c7n6.scores, blind: true, timestamp: '2026-09-20T00:00:00Z', ai_at_submit: { form: '2026', scores: ai7n6, scorer: 'v2-rag-2' } }] };
++await db.insertChunks([{ text: 'gg past', source: 'past_session', source_ref: 'session:gg', type: 'exemplar', author: 'mark' }]);
++const r5 = await ingestScore({ session: gatesS, mentor: 'gates' }, deps);
++assert.equal(r5.past_session_superseded, 0, "only Chris's scorecard supersedes the past_session chunk"); assert.equal(db.rows.find((r) => r.id === r5.exemplar_id).metadata.ai_at_submit.pinned_from, 'submit');
++
++// ── 4. comments ──
++const long = ['Lacks connection between the fundamentals named and what the ski did; rotary and edging are listed but never related to the turn shape she was after in that terrain.', 'The peer comparison:', 'A coaching cue plus — a few sentences, not a lecture. Tell them what to do, and the one reason it matters for the turn they just made on that pitch.', 'Agreed on the rest.', 'There is no speaking to equipment at all. Boots, ski width and tune all change how the edge engages and how the forces build through the shaping phase of the turn.'].join('\n\n') + '\n\n' + 'x'.repeat(200);
++const pts = splitPoints(long);
++assert.equal(pts.length, 4, 'lead-in rides forward, short tail rides back'); assert.ok(pts[1].startsWith('The peer comparison:') && pts[1].includes('Agreed on the rest.'));
++assert.equal(pts.join('\n\n'), long, 'verbatim: every word, in order, nothing added'); assert.deepEqual(splitPoints('Short one.'), ['Short one.']);
++const cc = commentChunks({ session: s7n6, item: { userId: 'chris', text: long, timestamp: 't1' } });
++assert.ok(cc[0].text.startsWith('Comment by chris on MA session 7n6ry6d') && cc[2].criteria.includes('equipment') && cc.every((c) => c.source === 'chris_comment' && c.author === 'chris' && c.metadata.timestamp === 't1'));
++assert.equal(commentChunks({ session: s7n6, item: s7n6.mentorFeedback[1] }).length, 0, "Mark's post is not a mentor comment");
++assert.equal(commentChunks({ session: s7n6, item: { userId: 'chris', kind: 'blind_score', scores: c7n6.scores, text: 'Chris scorecard …' } }).length, 0, 'scorecards belong to the score path');
++await db.insertChunks([{ text: 'whole comment as bootstrap stored it', source: 'chris_comment', source_ref: 'session:7n6ry6d', type: 'principle', author: 'chris', metadata: { timestamp: '2026-09-17T13:16:41.509Z' } }]);
++const ci = await ingestComments({ session: { ...s7n6, mentorFeedback: [...s7n6.mentorFeedback, { userId: 'chris', text: long, timestamp: 't2' }] } }, { store: db });
++assert.equal(ci.comments_skipped, 1, 'a comment already in the store (any form) is not ingested again'); assert.equal(ci.inserted, 4);
++assert.equal((await ingestComments({ session: { ...s7n6, mentorFeedback: [{ userId: 'chris', text: long, timestamp: 't2' }] } }, { store: db })).inserted, 0, 'idempotent');
++
++// ── 5. agreement — must reproduce §16's numbers ──
++const a = agreement([s7uk, s7n6]);
++assert.deepEqual([a.blind.overall.exact, a.blind.overall.within_one, a.blind.overall.n], [3, 5, 6], '7uk7lnh: exact 3/6, within-one 5/6');
++assert.equal(a.blind.per_criterion.evaluate.mean_delta, 2, 'Evaluate AI +2'); assert.equal(a.blind.same_result.agree, 1);
++assert.deepEqual([a.all.overall.exact, a.all.overall.within_one, a.all.overall.n], [5, 11, 12], 'running total 5/12 exact (42%), 11/12 within one (92%)');
++assert.equal(a.all.overall.exact_pct, 41.7); assert.equal(a.all.overall.within_one_pct, 91.7); assert.equal(a.blind.meets_targets, false);
++assert.equal(a.not_blind.sessions, 1); assert.ok(a.sessions.every((r) => r.unpinned), 'hand-posted cards with no pin are flagged');
++const pinned = agreement([rescored], { pins: { '7uk7lnh': { scores: ai7uk, scorer: 'v2-rag-2' } } });
++assert.equal(pinned.blind.per_criterion.evaluate.mean_delta, 2, 'a rescore does not move a past comparison'); assert.equal(pinned.sessions[0].ai_source, 'pinned_at_ingest');
++const leg = agreement([{ ...s7uk, parsedSummary: { scores: { describe: 4, cause_effect: 3, evaluate: 4, prescription: 4, biomechanics: 3, communication: 4 } } }]);
++assert.equal(leg.sessions.length, 0); assert.match(leg.excluded[0].reason, /old-scorer/);
++assert.equal(agreement([gatesS], { mentor: 'gates' }).sessions[0].ai_source, 'submit');
++assert.equal(a.trend.length, 1, 'trend is over blind scorecards only');
++
++// ── 6. the assembler retrieves exemplars, never the session's own ──
++const id = (n) => `${String(n).padStart(8, '0')}-0000-0000-0000-000000000000`;
++const defs = Array.from({ length: 7 }, (_, i) => ({ id: id(100 + i), text: 'def', source: 'psia_doc', source_ref: `at-ma-tu-assessment-form-2026.md#MA › ${i}`, type: 'definition', author: 'psia', metadata: {} }));
++const exRows = db.rows.filter((r) => r.type === 'exemplar' && r.source === 'chris_score' && !r.superseded_by).map((r, i) => ({ ...r, similarity: 0.6 - i / 100 }));
++const calls = [];
++const store = { getBySourceRefPrefix: async () => defs, searchByEmbedding: async (_e, o) => { calls.push(o); if (o.types?.length === 1 && o.types[0] === 'exemplar') return exRows.filter((r) => o.authors.includes(r.author)); return []; } };
++const asm = await assemble(mkX(), { sessionId: 'ma_7uk7lnh', deps: { embedQuery: async () => [0], store } });
++assert.deepEqual(calls.find((c) => c.types?.[0] === 'exemplar' && c.types.length === 1).authors, ['chris'], "exemplar slot asks for Chris's only");
++assert.deepEqual(asm.manifest.exemplar_sessions, ['7n6ry6d'], "scoring 7uk7lnh sees 7n6ry6d's exemplar and not its own (nor Gates's)");
++assert.ok(asm.context.includes('Equipment — CHRIS: 1') && !asm.context.includes('Fall Line Bumps'), 'own exemplar text absent from the context');
++assert.ok(asm.context.includes('start from Chris\'s number'), 'anchoring instruction rides with the exemplars'); assert.ok(asm.manifest.tokens.total <= BUDGET.total);
++assert.equal(Object.values(asm.chunkIndex).find((c) => c.slot === 'exemplars').type, 'exemplar', 'exemplar is citable');
++assert.ok(normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).embed_text === 'b' && hashText('a') === normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).text_hash, 'hash is of the stored text, not the embedded text');
++
++console.log('selftest-ingest: all checks passed');
+diff --git a/scripts/selftest-score.mjs b/scripts/selftest-score.mjs
+index cb9cb52..a4a8c75 100644
+--- a/scripts/selftest-score.mjs
++++ b/scripts/selftest-score.mjs
+@@ -18,7 +18,7 @@ const psia = Array.from({ length: 40 }, (_, i) => mk(200 + i, { text: 'p '.repea
+ const calls = [];
+ const store = {
+   getBySourceRefPrefix: async () => defs,
+-  searchByEmbedding: async (_e, o) => { calls.push(o); assert.notEqual(o.includeUnapproved, true); if (o.authors) return chris; if (o.types) return []; return [...psia, defs[3]]; },
++  searchByEmbedding: async (_e, o) => { calls.push(o); assert.notEqual(o.includeUnapproved, true); if (o.sources?.includes('chris_score') && o.types?.length === 1) return []; if (o.authors) return chris; return [...psia, defs[3]]; },
+ };
+ const x = { ma_type: 'at_exam', skills_referenced: ['edging', 'bogus'], observations: [], verbatim_key_phrases: ['tails break away'], equipment: { addressed: false } };
+ 
+@@ -32,6 +32,7 @@ assert.ok(a.manifest.counts.psia > 0 && a.manifest.counts.psia < 40);
+ assert.ok(!Object.values(a.manifest.chunks).some((c) => c.slot === 'psia' && c.source_ref.startsWith('at-ma-tu')), 'definitions not duplicated in psia slot');
+ assert.deepEqual(calls.find((c) => c.sources?.includes('psia_doc')).skills, ['edging'], 'skill filter uses valid tags only');
+ assert.equal(calls.find((c) => c.authors)?.skills, undefined, 'Chris slot skips the skill filter');
++assert.ok(!calls.find((c) => c.sources?.includes('mentor_assessment')).types.includes('exemplar'), 'exemplars are excluded from the Chris slot in the query');
+ assert.ok(calls.findIndex((c) => c.authors) < calls.findIndex((c) => c.sources?.includes('psia_doc')), 'Chris slot filled before PSIA');
+ assert.ok(a.context.indexOf('CHRIS') < a.context.indexOf('PSIA REFERENCE'));
+ const b = await assemble(x, { sessionId: 'SELF', includeSelf: true, deps: { embedQuery: async () => [0], store } });
+diff --git a/src/api.js b/src/api.js
+index 19de66b..b6b55f7 100644
+--- a/src/api.js
++++ b/src/api.js
+@@ -168,8 +168,23 @@ export async function appendFeedback(sessionId, item) {
+   if (!merged.some((f) => fbKey(f) === fbKey(item))) merged.push(item);
+   merged.sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
+   const ok = await updateMaColumns(bare, { mentorFeedback: JSON.stringify(merged) });
++  if (ok) feedKnowledge(bare, item);
+   return { ok, mentorFeedback: merged };
+ }
++
++/**
++ * §6.3 / §6.4 — after the Sheet has the item, tell the knowledge store. Fire-and-forget: the Sheet is the record, the
++ * server re-reads the item from it, and `npm run ingest:scores` picks up anything missed — so a failure here never
++ * blocks or fails the post. One retry, because Apps Script can take a moment to show a row it has just written (409).
++ */
++function feedKnowledge(bare, item) {
++  const who = String(item?.userId || "").toLowerCase();
++  if (!["chris", "gates", "mike"].includes(who)) return;
++  const call = item.kind === "blind_score"
++    ? () => postJson("/api/ingest/score", { sessionId: bare, mentor: who })
++    : () => postJson("/api/ingest/comment", { sessionId: bare, timestamp: item.timestamp });
++  call().catch(() => new Promise((r) => setTimeout(r, 4000)).then(call)).catch((e) => console.warn("knowledge ingest deferred:", e?.message || e));
++}
+ export const deleteMaSession = (sessionId) => apiDelete("MASessions", `ma_${String(sessionId).replace(/^ma_/, "")}`);
+ 
+ /** "Try that line again": one passage, one line (§13 row 5). Read-only on the server. */
+diff --git a/src/lib/scorecard.js b/src/lib/scorecard.js
+index 5280915..7c78b57 100644
+--- a/src/lib/scorecard.js
++++ b/src/lib/scorecard.js
+@@ -15,9 +15,9 @@
+ //      Stored averages are ignored and recomputed (a mismatch is reported in `warnings`).
+ //   5. Blind scoring lives here too (§9). For a mentor who has not submitted a score on a session, scorecard()
+ //      returns `sealed: true` and NO AI numbers, rationale, or coaching. Components cannot leak what they are not given.
+-import { SCORED, SCORED_CRITERIA, LEGACY_CRITERIA as DIAG_KEYS, PASS } from "../../lib/vocab.js";
+ import { parseSummary } from "../../lib/parseSummary.js";
+-import { USERS } from "./users.js";
++import { cleanScore, formMath, formatScoreLine, parseScoreLine, mentorScores, isScoreItem } from "../../lib/mentorScores.js";
++export { cleanScore, formMath, formatScoreLine, parseScoreLine, mentorScores, isScoreItem };
+ 
+ export const SECTIONS = [
+   { key: "ma", label: "Movement Analysis", lines: [
+@@ -33,17 +33,9 @@ export const LEGACY_LINES = [
+   { key: "prescription", label: "Prescription", short: "P" }, { key: "biomechanics", label: "Bio/Physics", short: "B" }, { key: "communication", label: "Comm", short: "Co" },
+ ];
+ 
+-/** A score is an integer 1–6 or it is null. 0, "", NaN, "4.5abc" → null. */
+-export const cleanScore = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 1 && n <= 6 ? Math.round(n) : null; };
++// cleanScore / formMath / the mentor-scorecard reader live in lib/mentorScores.js so the API reads a scorecard the same way (session 6).
+ const round2 = (n) => Math.round(n * 100) / 100;
+ 
+-/** Section averages + pass for a { line: score } map on the 2026 form. Null wherever a line is missing. */
+-export function formMath(scores) {
+-  const avg = (keys) => { const xs = keys.map((k) => cleanScore(scores?.[k])); return xs.every((x) => x != null) ? round2(xs.reduce((a, b) => a + b, 0) / xs.length) : null; };
+-  const ma = avg(SCORED.ma), tu = avg(SCORED.tu);
+-  return { sections: { ma, tu }, meets: ma != null && tu != null ? ma >= PASS && tu >= PASS : null };
+-}
+-
+ /** Which form a result is on. `equipment` present = 2026 evaluator; scorer:"legacy" always wins. */
+ export const formOf = (r) => (!r?.scores ? null : (r.scorer === "legacy" || r.meta?.scorer === "legacy" || r.scores.equipment == null) ? "legacy" : "2026");
+ export const isLegacyAttempt = (a) => formOf(a) === "legacy";
+@@ -77,40 +69,7 @@ export function attemptRank(a) {
+ }
+ export const bestAttempt = (attempts) => (attempts || []).filter((a) => a?.scores).reduce((b, a) => (b == null || attemptRank(a) > attemptRank(b) ? a : b), null) || attempts?.[0] || null;
+ 
+-// ── mentor scores ────────────────────────────────────────────────────────────
+-const KEY_RE = new RegExp(`\\b(${[...SCORED_CRITERIA, "needs_safety", "behavior_management"].join("|")})\\s*[:=]?\\s*([1-6])\\b`, "gi");
+-
+-/** The one text format for a mentor scorecard in the comment thread — what Mark posted by hand for 7n6ry6d, and what the blind form writes. */
+-export function formatScoreLine({ who, date, scores, blind, note }) {
+-  const f = (keys) => keys.map((k) => `${k} ${scores[k]}`).join(", ");
+-  const m = formMath(scores);
+-  return `${who} scorecard ${date} (2026 form${blind ? ", scored blind" : ""}): MA: ${f(SCORED.ma)} (avg ${m.sections.ma}) | TU: ${f(SCORED.tu)} (avg ${m.sections.tu}) | Overall: ${m.meets ? "Meets Standards" : "Does Not Meet Standards"}${note ? ` | Note: ${note}` : ""}`;
+-}
+-export function parseScoreLine(text) {
+-  if (!/scorecard/i.test(text || "")) return null;
+-  const scores = {}; let m; KEY_RE.lastIndex = 0;
+-  while ((m = KEY_RE.exec(text))) scores[m[1].toLowerCase()] = Number(m[2]);
+-  return SCORED_CRITERIA.every((k) => scores[k] != null) ? scores : null;
+-}
+-
+-/** Every mentor scorecard on a session, newest per mentor. Structured items (blind form) and hand-posted lines both count. */
+-export function mentorScores(session) {
+-  const out = {};
+-  for (const f of session?.mentorFeedback || []) {
+-    let who = f.userId, scores = null, blind = false;
+-    if (f.kind === "blind_score" && f.scores) { scores = f.scores; blind = f.blind !== false; }
+-    else {
+-      scores = parseScoreLine(f.text);
+-      blind = !!scores && /scored blind/i.test(f.text);              // a verbal scorecard posted on his behalf can still be a blind one (7uk7lnh, 9/18 call)
+-      const named = scores && String(f.text).match(/^\s*(\w+)\s+scorecard/i)?.[1]?.toLowerCase();
+-      if (named && USERS[named]) who = named;                       // "Chris scorecard … posted by Mark" belongs to Chris
+-    }
+-    if (!scores || !USERS[who] || USERS[who].role !== "mentor") continue;
+-    const clean = Object.fromEntries(SCORED_CRITERIA.map((k) => [k, cleanScore(scores[k])]));
+-    out[who] = { who, scores: clean, ...formMath(clean), blind, note: f.note || "", timestamp: f.timestamp || null, postedBy: f.userId, aiAtSubmit: f.ai_at_submit || null };
+-  }
+-  return out;
+-}
++// ── mentor scores ── (lib/mentorScores.js; re-exported so components keep one import)
+ 
+ /** Per-line AI − mentor. Only on the 2026 form, only where both have the line. */
+ export function deltas(card, mentor) {
+-- 
+2.43.0
+

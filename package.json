@@ -20,7 +20,8 @@
     "zoom": "node scripts/zoom.mjs",
     "test:zoom": "node scripts/selftest-zoom.mjs",
     "ingest:scores": "node scripts/ingest-scores.mjs",
-    "test:ingest": "node scripts/selftest-ingest.mjs"
+    "test:ingest": "node scripts/selftest-ingest.mjs",
+    "test:journal": "node scripts/selftest-journal.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

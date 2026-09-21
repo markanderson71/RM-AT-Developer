@@ -1,5 +1,6 @@
 // Fetch wrappers for /api/*. Harvested from ATDevelopmentJournal.jsx: response-shape guards on getAll
 // ({rows}|{data}|array, wrapped in {response}), update-then-create upsert, never throws to the UI.
+import { normalizeJournalRow, hasTypeColumn, byEntryDesc, contentRow, createRow, applyPulse, mergeComment } from "./lib/journal.js";
 
 // The Apps Script endpoint fails transiently: the 302 drops the POST and the proxy hands back a Google HTML page
 // (seen as 404 / non-JSON), or the script replies "Unknown action: ". Both clear on the next try. Reads AND writes
@@ -191,3 +192,50 @@ export const deleteMaSession = (sessionId) => apiDelete("MASessions", `ma_${Stri
 export const scoreLineTry = ({ session, extraction, line, section, passage, original }) =>
   postJson("/api/score/evaluate", { lines: [line], extraction, section, passage, original: original || null, sessionId: session.id || undefined,
     session: { type: session.type, context: session.context, who: session.who, activity: session.activity, conditions: session.conditions, sections: session.sections, transcript: Object.keys(session.sections || {}).length ? undefined : session.transcript } });
+
+// ── Journal (session 7) ───────────────────────────────────────────────────────
+// Same write discipline as MA History: Mark's save sends the content columns; a depth tap sends `mentorPulse`; a comment
+// sends `mentorComments` — the last two after re-reading the live row, so nobody writes over anybody from a stale copy.
+
+/** → { entries, typeColumn } — typeColumn false means the Sheet has no `entryType` header and types cannot be saved. */
+export async function loadJournal() {
+  const rows = await apiGet("Journal");
+  return { entries: rows.map(normalizeJournalRow).filter(Boolean).sort(byEntryDesc), typeColumn: hasTypeColumn(rows) };
+}
+
+/** Apps Script `update` creates the row when the id is new, so one call covers both and a retry can never duplicate. */
+export const saveJournalEntry = (entry, { isNew = false } = {}) => apiUpdate("Journal", isNew ? createRow(entry) : contentRow(entry));
+
+async function liveJournalEntry(id) {
+  const rows = await apiGet("Journal");
+  if (sheetHealth.failed.has("Journal")) return { live: null, reason: "unreachable" };
+  const live = rows.map(normalizeJournalRow).filter(Boolean).find((e) => e.id === id) || null;
+  // `update` upserts: writing one column to an id that is gone would resurrect an empty row.
+  return { live, reason: live ? "" : "gone" };
+}
+
+/** value: "surface" | "connecting" | "integrated" | null (deselect). → { ok, reason, mentorPulse } */
+export async function setJournalPulse(id, mentorKey, value) {
+  const { live, reason } = await liveJournalEntry(id);
+  if (!live) return { ok: false, reason, mentorPulse: null };
+  const mentorPulse = applyPulse(live.mentorPulse, mentorKey, value);
+  const ok = await apiUpdate("Journal", { id, mentorPulse: JSON.stringify(mentorPulse) });
+  return { ok, reason: ok ? "" : "write", mentorPulse, mentorComments: live.mentorComments };
+}
+
+/** → { ok, reason, mentorComments } with the merged thread. */
+export async function appendJournalComment(id, item) {
+  const { live, reason } = await liveJournalEntry(id);
+  if (!live) return { ok: false, reason, mentorComments: null };
+  const mentorComments = mergeComment(live.mentorComments, item);
+  const ok = await apiUpdate("Journal", { id, mentorComments: JSON.stringify(mentorComments) });
+  return { ok, reason: ok ? "" : "write", mentorComments, mentorPulse: live.mentorPulse };
+}
+
+export const deleteJournalEntry = (id) => apiDelete("Journal", id);
+
+/** Existing Apps Script `notify` action (mails every `_MENTOR_PROFILES` entry with an email). → { ok, sent, error } */
+export async function notifyMentors(subject, body) {
+  const { ok, data } = await sheetPost({ _action: "notify", _sheet: "Config", subject, body });
+  return { ok: ok && data?.success !== false, sent: Number(data?.sent) || 0, error: data?.error ? String(data.error) : "" };
+}

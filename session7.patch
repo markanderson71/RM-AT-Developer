@@ -1,0 +1,1296 @@
+diff --git a/AT_Scoring_Architecture.md b/AT_Scoring_Architecture.md
+index ac3baa1..01e6509 100644
+--- a/AT_Scoring_Architecture.md
++++ b/AT_Scoring_Architecture.md
+@@ -1,6 +1,6 @@
+ # AT Development Journal — Scoring System Architecture
+ 
+-**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6: exemplars live and cited (6a: 6/12 exact · 12/12 within one); 6b failed on the blind session (Evaluate +2), 6c (`v2-rag-4` + evidence guards) built, **live check pending; third scorecard when Chris is back** (37 Chris statements from the 9/18 call still pending his approval); next is 7
++**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6: exemplars live and cited (6a: 6/12 exact · 12/12 within one); 6b failed on the blind session (Evaluate +2), 6c (`v2-rag-4` + evidence guards) live-checked — anchors and Equipment fixed, **Evaluate still +2 on 7uk7lnh pending Chris's two Evaluate chunks; template frozen until the third scorecard** (37 Chris statements from the 9/18 call still pending his approval); session 7 (Journal tab) built and verified offline — **done-when open: needs an `entryType` header added to the Journal sheet and Chris's real address in `_MENTOR_PROFILES` (§17), then six entries, Chris's depth read, the email**; next is 8
+ **Owner:** Mark Anderson
+ **Ground truth:** Chris (AT Assessor)
+ **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
+@@ -341,7 +341,7 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
+   tabs/
+     Sparring.jsx            + ATExam.jsx, WrittenMA.jsx as sub-components
+     MAHistory.jsx           + BlindScoreForm.jsx, Rationale.jsx, CoachingPanel.jsx
+-    Journal.jsx
++    Journal.jsx             + JournalEntryForm.jsx, JournalThread.jsx (depth assessment + comments)
+     Progress.jsx            + AgreementPanel.jsx, ChunkApproval.jsx
+     Themes.jsx  Checkpoints.jsx  Videos.jsx  Growth.jsx
+     Timeline.jsx  Clinics.jsx  Resources.jsx  Profile.jsx
+@@ -349,6 +349,8 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
+     parseSummary.js         harvested from old app, with all retry logic
+     scorecard.js            THE reader of scores: scorecard(session, {viewer}) — forms, averages, verdict, mentor scorecards, deltas, blind seal. Nothing else reads summary.scores.
+     prompts.js              sparring/coach system prompts (moved from JSX)
++    journal.js              Journal vocabulary (types, prompts, domains, depth), row ↔ entry mapping + guards, contentRow (candidate-owned columns only), applyPulse / mergeComment, listSummary, drafts. Pure.
++    resources.js            AT Program Guide learning experiences (harvested verbatim); Journal links to them, the Resources tab (session 10) lists them
+ 
+ /api/claude.js              existing — sparring/chat calls, unchanged
+ /api/sheet.js               existing — unchanged
+@@ -384,6 +386,8 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
+ /scripts/score.mjs          NEW — CLI for the /api/score path; `--compare "2,2,2,2,2,1"` or `--compare chris` (his scorecard from the Sheet) checks exact / within-one; prints which exemplars were shown and cited
+ /scripts/ingest-scores.mjs  NEW — backfill / catch-up: every mentor scorecard → exemplar, `--comments`, `--reextract`, `--dry`; prints agreement
+ /scripts/selftest-ingest.mjs NEW — offline: exemplar text, idempotence, pin survives rescore, comment split, agreement reproduces §16's 3/6·5/6 and 5/12·11/12, self-exclusion
++/scripts/selftest-journal.mjs NEW — offline: row guards, column ownership against a simulated Apps Script (stale candidate save vs mentor depth/comment, no duplicate on retry, no resurrected row), list summary, notify, Challenge prompt; optional live Journal export
++/scripts/rendertest-journal.jsx NEW — server-renders the Journal tab from a live export as Mark, Chris and Gates
+ /scripts/retrieval-eval.mjs NEW — §14
+ ```
+ 
+@@ -494,12 +498,17 @@ Recorded so they aren't re-argued.
+ | An exemplar bounds a score; it never sets it | `v2-rag-3` told the evaluator to start from Chris's number and move for named differences; against a single all-2s exemplar it added levels ("two levels above: 4"). Weaker/equal ⇒ ≤ N, stronger ⇒ ≥ N, and the rung is earned on the scale. Decided 2026-09-19. |
+ | Template changes are A/B-tested on a fixed extraction (`--reuse`) | Extraction is not repeatable (7uk7lnh: 9 → 10 connections, Evaluate 3 → 4 across runs); a fresh one confounds the comparison. |
+ | One complete instance alone = 3 at most; 4 = recurs, or (single-occurrence lines) complete and threaded | Two over-scores on 7uk7lnh came from "complete: 1 · partial: 0" having no rung. Applied with exemplars, tested on both scorecards, not tuned line by line. Decided 2026-09-19. |
++| Journal writes are split by owner: Mark's save sends the content columns; a depth tap sends `mentorPulse`; a comment sends `mentorComments` — the last two after re-reading the live row; all through `update` (which upserts), never `create` | Same failure as MA History: the old app saved the whole row from memory on every action, so Mark's edit could erase Chris's depth read and two commenters could erase each other. `update`-only means a retried create cannot duplicate a row; the re-read also stops a write to a deleted id from resurrecting an empty row. Decided 2026-09-19. |
++| Challenge Me has its own prompt, keyed on the entry's type; it reads no scores and its reply is never written to the Sheet | The old button sent the entire eight-layer sparring prompt (reference text, four transcripts, old-scorer numbers) to challenge a clinic note as if it were an MA. Scores are read by `scorecard()` only (row above). The reply is an AI prompt to think, not a record; it is kept on the device, tied to the text it answered. |
++| Mentors are emailed only after the Sheet confirms a NEW entry; the result is shown, with a resend | The old app fired `notify` beside an unawaited save — a mail could announce an entry that never landed. Edits never notify. |
+ | Backend/frontend sessions alternate | Each session is one kind of work; review is easier; the scoring loop is live by session 6 without waiting for all tabs. |
+ 
+ ## 16. Session log
+ 
+ *(append one line per build session: date · session # · built · decided · deferred)*
+ 
++- **2026-09-19 · Session 7 (frontend — Journal)** · Mark: the list needs a second line of each entry; otherwise the tab is good. · Built: `src/lib/journal.js` (types, adaptive prompts, domains, depth options and default themes harvested unchanged; `normalizeJournalRow` with the old loader's guards — Config/`ma_` rows skipped, JSON columns parse-or-default and type-checked, a Sheet-reformatted date read back as yyyy-mm-dd — plus a stable id for an id-less row, where the old app minted a new one per load; sort date → timestamp → id; `contentRow` / `createRow`; `applyPulse`, `mergeComment`, `topDepth`; `listSummary`; `notificationFor`, `notifyRecipients`; drafts), `src/lib/resources.js` (the 21 learning experiences, verbatim, so the resource link keeps working before session 10), `tabs/Journal.jsx` (list → entry → edit; theme filter; mentor list flags "Needs your read"; candidate-only edit / delete / Challenge), `tabs/JournalEntryForm.jsx` (six types, prompts follow the type, Conditions field — a Sheet column the old form never exposed, mic on every prompt, connection + theme tags, resource, working copy autosaved per entry with restore/discard, no-change save writes nothing, says who will be mailed), `tabs/JournalThread.jsx` (depth: set / change / tap again to clear, busy + error states; comments with a persisted draft and mic), `prompts.js` += `buildChallengeSystem` / `challengeUserMessage`, `api.js` += `loadJournal`, `saveJournalEntry`, `setJournalPulse`, `appendJournalComment`, `deleteJournalEntry`, `notifyMentors`; `App.jsx` loads the Journal with the rest and adds the tab for both roles. **List summary:** line 1 is the first line of the first answered prompt; line 2 is the rest of that answer when it ran on, else the next answered prompt with its label. · **Found in the live Sheet:** (1) **the Journal tab has no `entryType` column** — the Apps Script writes only keys that match a header and `autoCreateTab` never made one, so the old app has never stored an entry's type (all four live rows reload as coaching). The tab detects this from the row keys, tells Mark on the list and in the form, and does not label an untyped entry as Coaching. One header cell fixes it; no code. (2) `_MENTOR_PROFILES` holds one profile, `chris`, whose email is Mark's Gmail (left from the May test in `_NOTIFY_DEBUG`) — the notification would fire and reach Mark. (3) `Config._THEMES` is empty; entries are tagged with the old app's hard-coded default theme ids, so the same defaults are the fallback here. · Verified: `npm run test:journal -- out/Journal.json` (10 groups; simulated Apps Script with the real header-mapping / per-column / upsert semantics: Mark's save from a stale copy keeps Chris's depth read and Gates's comment, two stale commenters both land, deselect reaches the Sheet, a transient failure is retried and a repeated create leaves one row, a depth tap on a deleted entry creates nothing, the type is dropped without the header and round-trips with it; all four live rows survive load → save field for field); `scripts/rendertest-journal.jsx` against the live Journal + Config export as Mark, Chris, Gates; history / exam / score / ingest / zoom selftests pass; `vite build` clean. · **Not verified here: any live write, the Challenge call, the email.** Done-when open on all three counts — six entries (after the header), Chris's depth read (he is away), the email (after his address is in his profile). · Decided: three §15 rows. No new serverless function (still 12). · Deferred: see §17.
++- **2026-09-19 · Session 6c — live check on fixed evidence (`--reuse`)** · 7n6ry6d unchanged: exact 4/6, within-one 6/6. 7uk7lnh: 3/4/3 · 3/3/2 vs Chris 2/2/3 · 2/3/3 — exact 2/6, within-one 5/6. **Fixed:** anchors now read "bound: ≥2", no level arithmetic; Equipment 4 → 2 (guard fired: every equipment sentence is a recommendation; Chris 3, now −1 where it was +1). **Not fixed: Evaluate 4 (Chris 2)** — no private-notes guard fired, so the ideal was spoken; both comparisons are genuinely made, unprompted; the evaluator judged the single instance "threaded". This is the residual predicted in the 6b entry: the saved blind score under `v2-rag-2` was also 4. Desired Performances 3 (+1) follows from the same spoken ideal (earlier extractions missed it) with `fundamentals_blended: []`. · Totals on these two cards — 6a: 6/12 exact · 12/12 within one (different extraction); 6c: 6/12 · 11/12. Indistinguishable at n = 2. · **Decided: stop tuning.** One blind line on one session is not a basis for another template change; every further edit tonight would be fitting it. Ship 6c because its changes are each verified against something other than the score (Chris's 9/18 equipment ruling, speaker labels, the anchor text), not because the totals moved. Template frozen at `v2-rag-4` / extract v4 until the third scorecard, which must be scored blind by this scorer before Chris sees it. · Follow-up: re-ingest 7uk7lnh's exemplar after 6c so its equipment line is rendered from the guarded extraction (it currently says "states the effect: yes" beside Chris's 3).
+ - **2026-09-19 · Session 6 — live runs, 6b failed on the blind session, 6c** · Ingest: both exemplars live (first run was accidental — `--dry.` with a trailing period was silently ignored; CLIs now reject unknown flags). **6a, exemplars alone (`v2-rag-2`):** 7uk7lnh 3/3/3 · 2/3/4 vs Chris 2/2/3 · 2/3/3 — exact 3/6, within-one 6/6 (saved blind score was 5/6; Evaluate 4 → 3); 7n6ry6d 2/1/3 · 1/2/1 vs 2/2/2 · 2/2/1 — exact 3/6, within-one 6/6. Total 6/12 · 12/12 (before exemplars 5/12 · 11/12). Each rescore was shown the other session's exemplar and cited it — the "a rescore cites one" half of done-when is met. **6b (extract v4 / `v2-rag-3`):** 7n6ry6d 2/2/3 · 1/2/1 — exact 4/6, within-one 6/6, Evaluate 1 → 2 through `vs_intent: partial` (the three-state comparison doing its job). **7uk7lnh 3/4/3 · 3/3/4 — exact 2/6, within-one 5/6, Evaluate +2: FAIL.** Diagnosis from the extraction and `exemplar_anchor`: (1) the anchor instruction ("start from Chris's number, move for a named difference") became an adder — with one exemplar, the all-2s session, every line was "stronger than a 2" and the evaluator wrote "Warrants two levels above: 4", "three levels above: 4"; (2) the v4 clerk said yes to every new field: `states_effect_on_observed_performance: true` on a quote whose every equipment sentence is should / might allow / will help (Chris, 9/18: "a recommendation"), and `vs_intent.reference_quote` was the peer's sentence, not Mark's; (3) each run re-extracted, so the A/B was confounded. · **6c built:** `evidenceGuards` in code (replaces `speakerGuard`): evidence whose quote exists only in private notes is cleared (in notes *and* spoken = spoken); an equipment quote whose every equipment sentence is modal/future is not an effect on observed performance; a `vs_intent` reference that is someone else's words is flagged, state left alone; runs before `comparisonFacts` so a cleared reference demotes "made". `whoSaid()` in `lib/coaching.js`. **`v2-rag-4`: an exemplar BOUNDS a score (weaker/equal ⇒ ≤ N, stronger ⇒ ≥ N); the rung above is earned on the scale, never "N plus the differences"**; cite an exemplar only where it bounded. `score.mjs --reuse` re-evaluates the saved extraction (current guards re-applied) so a template change is tested on fixed evidence. Offline tests use the real 7uk7lnh quotes. · **Open — Evaluate on 7uk7lnh is not fixable from presence alone.** Mark did make both comparisons, unprompted, in outcome terms; Chris gave 2. What separates his 2 from a 4 is in his own pending statement (42:23: "go to the component parts… always in relationships between fundamentals, phase to phase") — the *depth* of the comparison, not its existence. That is Chris's content and arrives by retrieval when he approves it; it is not going into the template. Expect Evaluate +1 on this session until then. · Live check of 6c pending.
+ - **2026-09-19 · Session 6 (backend — the feedback loop)** · Built, as two commits so each can be measured on its own. **6a (exemplars alone, scorer unchanged `v2-rag-2`):** `lib/mentorScores.js` (the one scorecard reader, moved out of `src/lib/scorecard.js`, which re-exports it; `vocab.MENTORS`); `lib/ingest/score.js` + `api/ingest/score.js` (scorecard read from the Sheet → per-line exemplar ≤1.8K tok embedded on the extraction text + note chunks; AI score pinned once; idempotent; replaces by supersession; Chris's supersedes `past_session`); `lib/ingest/comment.js` + `api/ingest/comment.js` (verbatim single-point split, seen-by-timestamp guard); `lib/agreement.js` + `api/agreement.js`; `store.js` += `embed_text`, ids returned from `insertChunks`, `liveBySourceRef`, `commentTimestamps`, `listExemplars`; assembler: exemplar slot `author = chris`, exemplars excluded from the Chris slot in the query, anchoring header, `manifest.exemplar_sessions`; `src/api.js` `appendFeedback` → fire-and-forget ingest with one retry; `scripts/ingest-scores.mjs`, `score.mjs --compare chris`; `Rationale.jsx` draws a cited exemplar as "Compared with a session Chris scored…", never inside quotation marks (it is his number, not his words), and the coaching panel no longer picks one as its Chris quote. **6b (extract v4 / `v2-rag-3`):** two three-state comparisons replace `comparison_to_intended_outcome.made` (v3 fields still written; stored v3 lifted on read); `equipment.states_effect_on_observed_performance`; `delivery_to_peer` Mark-only + `speakerGuard` in code; scale: one complete instance alone = 3 at most; `exemplar_anchor`; `gap_to_next` quotes Mark only; `unitCheck` / `mergePassage` follow (a rewrite that adds the ideal no longer erases a comparison to intent made elsewhere); template 2,989 tok of 3,000 — wording trimmed, no standing rule removed. · Verified offline: `npm run test:ingest` (exemplar text; three fit the slot even from an oversized extraction; re-run writes nothing and makes no model call; the pinned AI score survives rescore + re-ingest; Gates's card supersedes nothing; comment split is verbatim and idempotent; **agreement reproduces §16: blind 3/6 exact · 5/6 within one · Evaluate +2; all 5/12 (41.7%) · 11/12 (91.7%)**; scoring 7uk7lnh is shown 7n6ry6d's exemplar and not its own or Gates's); `test:score` (v4 facts, speaker guard on the 7uk7lnh peer-restatement case, exemplar bookkeeping); `test:history`, `test:exam`, `test:zoom`; `vite build` clean. · **Not verified here (no keys): every live step.** Done-when is open on all three counts until Mark runs it: (1) `npm run ingest:scores` → two exemplars in the store; (2) `npm run score -- 7uk7lnh --compare chris` and `-- 7n6ry6d --compare chris` → each shows the other's exemplar, cites it, within-one on all six; (3) **the third blind scorecard does not exist yet** — it arrives when Chris scores a fresh exam in the app (the same event that closes session 5), and the submit hook ingests it. · Decided: six new §15 rows. · Flag: with n = 2 and self-exclusion, each rescore sees exactly one exemplar, and 7n6ry6d's scorecard is the one `v2-rag-2`'s AT-bar paragraph was written from — agreement on these two after 6b is a regression check, not evidence; the first evidence is the third session, scored blind by `v2-rag-3` before Chris sees it. · Deferred: see §17.
+ - **2026-09-19 · Session 5 — live check, left open** · Deployed. Coaching panel made collapsible like the other sections (choice remembered). Try-that-line-again on `ma_7uk7lnh`: 139 s first try (≈90 s of it rebuilding the shed extraction, once per session per browser), **50 s steady state** — the under-a-minute half of done-when is met, with ~10 s of margin; not tuned on two data points (lever in §17). Chris's 9/18 verbal scorecard posted on 7uk7lnh in the parsed format (`scored blind`); the tab shows exact 3/6 · within-one 5/6 · same result, Evaluate AI +2 — matches the 9/18 log. · **Open: Chris scores one session blind in the new app** (he is away ~1 week). Decided with Mark: move on to session 6 and close this item when Chris is back; preferably on a fresh exam scored by `v2-rag-2`, which also gives session 6 its third scorecard. Do not rescore 7uk7lnh — it is the only session scored before Chris saw anything.
+@@ -577,4 +586,15 @@ Recorded so they aren't re-argued.
+ - **Approve these two first when Chris is back** (pending, `zoom:2026-09-18`): 42:23 (quality and accuracy → component parts → relative to an ideal, in relationships between fundamentals, phase to phase) and 49:35 (the two comparisons). They are the missing Evaluate calibration; until they are retrievable, outcome-level comparisons will keep scoring a point above Chris. The endpoint exists (`/api/chunks/approve`, actor must be chris); the UI is session 8.
+ - **The clerk says yes to new fields.** Every boolean added to the schema so far has needed a code guard within a day (how_stated, comparison made, delivery_to_peer, states_effect). Rule for any future field: define it by what it is NOT, and ship the deterministic check with it.
+ - **`evidenceGuards` equipment check is lexical** (modal verbs in every sentence that names equipment). It will miss a recommendation phrased in the present tense and could mis-fire on "her boots should have held her up and didn't". Logged in `extraction_guards` so a mis-fire is visible in the result.
++- **Desired Performances with an ideal stated but `fundamentals_blended: []`** scored 3 on 7uk7lnh (Chris 2). The unit says "multiple fundamentals in blended relationship"; an outcome-only ideal arguably is a partial instance. Same family as the Evaluate depth question — do not tune before the third scorecard and Chris's chunks.
++
++- **Journal sheet needs an `entryType` header (Mark, one cell).** Journal tab, row 1, first empty cell (column V): `entryType`. Until then no app can store an entry's type and session 7's done-when ("one entry of each type") cannot be met. Afterwards, set the type on the existing entries with Edit. The Apps Script's `autoCreateTab` header list has the same omission — add it there the next time that file is touched, so a rebuilt Sheet doesn't regress.
++- **`_MENTOR_PROFILES.chris.email` is Mark's Gmail; Gates and Mike have no profile.** `notify` mails every profile with an email. Put Chris's real address in (old app → Profile tab, as Chris; or edit the Config cell) before counting "notification email fires" as done. The new-entry form prints exactly who will be mailed.
++- **Journal mentor comments reach the knowledge store only through `bootstrap.mjs`.** §6.3 "continuous" is wired for MA History alone: `/api/ingest/comment` takes a `sessionId`. Backend follow-up (no new function): accept `{ journalId, timestamp }` and re-read the Journal row the same way. Until then, re-run bootstrap after Chris comments on entries.
++- **Test entry `7a8up2m` ("sadfasdfa", 2026-09-20) is in the live Journal** — delete it from the new tab (the old app has no journal delete).
++- **A mentor's comment or depth read does not notify Mark** (nor did the old app). If wanted: `notify` mails mentors only; a candidate address would need a profile entry and a `to` filter in the Apps Script.
++- **Mentors see each other's depth reads before giving their own** — kept from the old app. Depth is coaching signal, not agreement data, so no seal; revisit if it ever feeds a metric.
++- **Login now makes three parallel `getAll` calls** (MASessions, Config, Journal). Each retries on its own; if Apps Script transient failures get more frequent as tabs are added (sessions 8–10), load lazily per tab or serialize.
++- **Config has two `vid_qwn6hc1` rows** (seen in the session 7 export) — a duplicate from the old update→create fall-through. Session 9 (Videos): dedupe on load, newest wins.
++- **The notification links to the new app.** Chris is nominally on the old URL until session 8; both read the same Sheet, and the new Journal tab is complete for a mentor, so the link is safe to follow.
+ 
+diff --git a/package.json b/package.json
+index 82a4348..5902b2a 100644
+--- a/package.json
++++ b/package.json
+@@ -20,7 +20,8 @@
+     "zoom": "node scripts/zoom.mjs",
+     "test:zoom": "node scripts/selftest-zoom.mjs",
+     "ingest:scores": "node scripts/ingest-scores.mjs",
+-    "test:ingest": "node scripts/selftest-ingest.mjs"
++    "test:ingest": "node scripts/selftest-ingest.mjs",
++    "test:journal": "node scripts/selftest-journal.mjs"
+   },
+   "dependencies": {
+     "@anthropic-ai/sdk": "^0.52.0",
+diff --git a/scripts/rendertest-journal.jsx b/scripts/rendertest-journal.jsx
+new file mode 100644
+index 0000000..7850f1f
+--- /dev/null
++++ b/scripts/rendertest-journal.jsx
+@@ -0,0 +1,51 @@
++// Render check for the Journal tab against a real Journal export: candidate list, mentor list, one entry as each, the form.
++// npx esbuild scripts/rendertest-journal.jsx --bundle --platform=node --format=esm --jsx=automatic --loader:.js=jsx --external:react --external:react-dom --outfile=_rt.mjs && node _rt.mjs Journal.json [Config.json]
++import React from "react";
++import { renderToString } from "react-dom/server";
++import fs from "fs";
++import Journal from "../src/tabs/Journal.jsx";
++import JournalEntryForm from "../src/tabs/JournalEntryForm.jsx";
++import JournalThread from "../src/tabs/JournalThread.jsx";
++import { normalizeJournalRow, hasTypeColumn, byEntryDesc, newEntry, DEFAULT_THEMES, saveDraft } from "../src/lib/journal.js";
++import { USERS } from "../src/lib/users.js";
++
++const mem = new Map();
++globalThis.window = { localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) } };
++const rows = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).rows;
++const config = process.argv[3] ? Object.fromEntries(JSON.parse(fs.readFileSync(process.argv[3], "utf8")).rows.map((r) => [String(r.id).trim(), r.data])) : {};
++const journal = { entries: rows.map(normalizeJournalRow).filter(Boolean).sort(byEntryDesc), typeColumn: hasTypeColumn(rows) };
++const u = (k) => ({ key: k, ...USERS[k] });
++const text = (h) => h.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;|&quot;/g, "'").replace(/\s+/g, " ");
++const ok = (c, m) => { if (!c) { console.error("FAIL:", m); process.exitCode = 1; } else console.log("ok  ", m); };
++const noop = () => {};
++const props = { journal, loaded: true, config, mentorAssessments: {}, onEntries: noop };
++
++const mark = text(renderToString(<Journal user={u("mark")} {...props} />));
++const chris = text(renderToString(<Journal user={u("chris")} {...props} />));
++const gates = text(renderToString(<Journal user={u("gates")} {...props} />));
++ok(mark.includes("+ New Entry") && mark.includes("Entry types are not being saved") && mark.includes("Can I see past the symptom"), "candidate list: new-entry button, entryType warning, default theme filters (Config._THEMES is empty)");
++ok(mark.includes("Chris challenge no ski to ski or edging at all.") && mark.includes("Ski is white over white"), "list card carries a second line of the entry");
++ok(mark.includes("What was really going on underneath?") && mark.includes("Being able to detect"), "short first answer → second line is the next prompt, labelled");
++ok(mark.includes("◇ Connecting") && mark.includes("💬 1"), "depth badge and comment count from the live rows");
++ok(!chris.includes("+ New Entry") && !chris.includes("Entry types are not being saved") && !chris.includes("Delete entry"), "mentor list: read-only, no Sheet housekeeping");
++ok((chris.match(/Needs your read/g) || []).length === journal.entries.filter((e) => !e.mentorPulse.chris).length && (gates.match(/Needs your read/g) || []).length === journal.entries.length, "mentor list flags the entries THIS mentor has not assessed");
++ok(!mark.includes("🎿 On-Hill Coaching"), "an entry with no stored type is not labelled as Coaching");
++
++const e = journal.entries.find((x) => x.mentorComments.length) || journal.entries[0];
++const tChris = text(renderToString(<JournalThread entry={e} user={u("chris")} onChange={noop} />));
++const tMark = text(renderToString(<JournalThread entry={e} user={u("mark")} onChange={noop} />));
++ok(tChris.includes("How deep is Mark's thinking here?") && tChris.includes("tap your choice again to clear it") && /aria-pressed="true"[^>]*>[^<]*◇ Connecting/.test(renderToString(<JournalThread entry={e} user={u("chris")} onChange={noop} />)), "mentor: three depth buttons, his current choice pressed, clear hint");
++ok(!tMark.includes("How deep is") && tMark.includes("Chris ◇ Connecting") && tMark.includes("What else could be a root cause?") && tMark.includes("Post"), "candidate: depth read-only with who gave it, thread, reply box");
++
++const form = text(renderToString(<JournalEntryForm initial={newEntry("clinic")} saved={null} restored={false} themes={DEFAULT_THEMES} typeColumn={false} recipients={[{ key: "chris", email: "c@x" }]} onSave={noop} onBack={noop} onDiscard={noop} />));
++ok(["🎿", "⛷", "📋", "💬", "📖", "📝"].every((i) => form.includes(i)) && form.includes("1. What was the subject / focus?") && form.includes("6. Questions that remain") && !form.includes("What did I see?"), "form: six types; prompts follow the selected type");
++ok(form.includes("Movement Analysis") && form.includes("CAP Integration") && form.includes("Which themes does this push on?") && form.includes("R-MA1") && form.includes("Saving emails chris (c@x)"), "form: connection tags, theme tags, resource link, who gets mailed");
++const gen = text(renderToString(<JournalEntryForm initial={{ ...newEntry("general"), whatHappened: "typed under Coaching" }} saved={null} themes={[]} typeColumn recipients={[]} onSave={noop} onBack={noop} onDiscard={noop} />));
++ok(gen.includes("3. Additional thoughts") && !gen.includes("4.") && gen.includes("won't be saved") && gen.includes("nobody will be notified"), "General Note: three prompts; hidden answer and empty recipient list are called out");
++saveDraft("new", { ...newEntry("study"), whatISaw: "half-written" });
++ok(text(renderToString(<Journal user={u("mark")} {...props} />)).includes("Continue draft"), "an unsaved new entry is offered back from the list");
++
++const vMark = text(renderToString(<Journal user={u("mark")} {...props} openId={e.id} />));
++const vChris = text(renderToString(<Journal user={u("chris")} {...props} openId={e.id} />));
++ok(vMark.includes("Challenge My Thinking") && vMark.includes("Edit") && vMark.includes("Delete entry") && vMark.includes("Inspired by") && vMark.includes("Themes"), "candidate entry view: challenge, edit, delete, resource, themes");
++ok(!vChris.includes("Challenge My Thinking") && !vChris.includes("Delete entry") && !/>Edit</.test(renderToString(<Journal user={u("chris")} {...props} openId={e.id} />)) && vChris.includes("How deep is Mark's thinking here?"), "mentor entry view: no challenge / edit / delete; depth assessment present");
+diff --git a/scripts/selftest-journal.mjs b/scripts/selftest-journal.mjs
+new file mode 100644
+index 0000000..c1fd4dd
+--- /dev/null
++++ b/scripts/selftest-journal.mjs
+@@ -0,0 +1,180 @@
++// Offline checks for the Journal tab (session 7): row mapping and its guards, column ownership under concurrent writers,
++// depth set/change/clear, hash-diff, the two-line list summary, notification, drafts, the Challenge prompt.
++//   npm run test:journal [path/to/Journal-getAll.json]
++// With a real export as the argument, every live row is also run through the mapping and back.
++import assert from 'node:assert/strict';
++import { readFileSync, existsSync } from 'node:fs';
++
++const mem = new Map();
++globalThis.window = { localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }, location: { origin: 'https://rm-at-developer.vercel.app' } };
++
++// ── an in-memory Apps Script: same semantics as AT_AppsScript_V2 (header-mapped writes, per-column update, update upserts) ──
++const JOURNAL_HEADERS = ['id', 'date', 'context', 'location', 'conditions', 'whatISaw', 'whatWasGoingOn', 'whatIDid', 'whyThatApproach', 'whatHappened', 'whatIdDoDifferently', 'videoUrl', 'connectionTags', 'themeIds', 'depthLevel', 'resourceId', 'season', 'timestamp', 'mentorPulse', 'mentorComments', 'data'];
++const sheet = { headers: { Journal: [...JOURNAL_HEADERS] }, rows: { Journal: [] }, mail: [], failNext: 0, calls: [] };
++const profiles = { chris: { email: 'chris@example.com' }, gates: { email: '', notifications: true }, mike: { email: 'mike@example.com', notifications: false } };
++function script(body) {
++  const { _action, _sheet, ...data } = body;
++  sheet.calls.push(_action);
++  if (sheet.failNext > 0) { sheet.failNext--; return { error: 'Unknown action: ' }; }
++  const H = sheet.headers[_sheet] || ['id', 'data'], R = (sheet.rows[_sheet] ||= []);
++  const toRow = (d) => Object.fromEntries(H.map((h) => [h, d[h] !== undefined ? String(d[h]) : '']));
++  if (_action === 'getAll') return { rows: R.map((r) => ({ ...r })) };
++  if (_action === 'create') { R.push(toRow(data)); return { success: true }; }
++  if (_action === 'update') {
++    const row = R.find((r) => r.id === String(data.id));
++    if (row) { for (const h of H) if (data[h] !== undefined) row[h] = String(data[h]); return { success: true, action: 'updated' }; }
++    R.push(toRow(data)); return { success: true, action: 'created' };
++  }
++  if (_action === 'delete') { const i = R.findIndex((r) => r.id === String(data._id)); if (i < 0) return { error: `Row not found with id: ${data._id}` }; R.splice(i, 1); return { success: true }; }
++  if (_action === 'notify') { const to = Object.values(profiles).filter((p) => p.email && p.notifications !== false); to.forEach((p) => sheet.mail.push({ to: p.email, ...data })); return { success: true, sent: to.length }; }
++  return { error: `Unknown action: ${_action}` };
++}
++globalThis.fetch = async (url, init) => { assert.equal(url, '/api/sheet'); const out = script(JSON.parse(init.body)); return { ok: true, status: 200, text: async () => JSON.stringify(out) }; };
++
++const J = await import('../src/lib/journal.js');
++const api = await import('../src/api.js');
++const { buildChallengeSystem, challengeUserMessage } = await import('../src/lib/prompts.js');
++const { USERS } = await import('../src/lib/users.js');
++let n = 0; const ok = (m) => { n++; console.log('ok  ', m); };
++
++// ── 1. row mapping guards ────────────────────────────────────────────────────
++{
++  const base = { id: ' abc ', date: '2026-05-21', context: 'Training', whatISaw: 'x', connectionTags: '["ma","physics"]', themeIds: 'not json', mentorPulse: '{"chris":"connecting","gates":"bogus"}', mentorComments: '[{"userId":"chris","text":"why?","timestamp":"2026-05-22T00:00:00Z"},{"userId":"x"}]', timestamp: '2026-05-21T01:00:00Z' };
++  const e = J.normalizeJournalRow(base);
++  assert.equal(e.id, 'abc'); assert.deepEqual(e.connectionTags, ['ma', 'physics']); assert.deepEqual(e.themeIds, [], 'unparseable JSON column → default, not a throw');
++  assert.deepEqual(e.mentorPulse, { chris: 'connecting' }, 'unknown depth values dropped'); assert.equal(e.mentorComments.length, 1, 'comment without text dropped');
++  assert.equal(e.typeKnown, false); assert.equal(e.entryType, 'coaching', 'no stored type → coaching prompts, as the old app rendered it, but not labelled as such');
++  assert.equal(J.normalizeJournalRow({ ...base, entryType: 'study' }).typeKnown, true);
++  for (const id of ['_THEMES', 'ma_7uk7lnh', 'cp_1', 'vid_qwn6hc1']) assert.equal(J.normalizeJournalRow({ id, date: 'x' }), null, `${id} is not a journal entry`);
++  assert.equal(J.normalizeJournalRow({ id: '', date: '', context: '' }), null, 'blank row skipped');
++  const a = J.normalizeJournalRow({ id: '', whatISaw: 'kept', timestamp: '2026-04-21T13:58:34.618Z' }), b = J.normalizeJournalRow({ id: '', whatISaw: 'kept', timestamp: '2026-04-21T13:58:34.618Z' });
++  assert.equal(a.id, b.id, 'id-less row gets the SAME id on every load');
++  assert.equal(J.cleanDate('Tue Apr 21 2026 00:00:00 GMT-0600 (Mountain Daylight Time)'), '2026-04-21'); assert.equal(J.cleanDate('garbage'), ''); assert.equal(J.cleanDate('2026-05-01T03:00:00Z'), '2026-05-01');
++  const dated = [{ id: 'a', date: '', timestamp: '2026-04-21T13:00:00Z' }, { id: 'b', date: '2026-05-01', timestamp: '' }, { id: 'c', date: '2026-05-01', timestamp: '' }].map((r) => J.normalizeJournalRow({ ...r, whatISaw: 'x' })).sort(J.byEntryDesc);
++  assert.deepEqual(dated.map((x) => x.id), ['c', 'b', 'a'], 'undated entry sorts by its timestamp; same-day ties break on id');
++  assert.equal(J.hasTypeColumn([{ id: 'a' }]), false); assert.equal(J.hasTypeColumn([{ id: 'a', entryType: '' }]), true); assert.equal(J.hasTypeColumn([]), null);
++  ok('row mapping: JSON guards, foreign rows, stable ids, dates, sort, type-column detection');
++}
++
++// ── 2. column ownership ──────────────────────────────────────────────────────
++{
++  const e = { ...J.newEntry('general'), whatISaw: 'a', whatWasGoingOn: 'b', whyThatApproach: 'left over from Coaching', mentorPulse: { chris: 'integrated' }, mentorComments: [{ userId: 'chris', text: 'x' }] };
++  const row = J.contentRow(e);
++  assert.ok(!('mentorPulse' in row) && !('mentorComments' in row), "Mark's save never carries the mentor columns");
++  assert.equal(row.whyThatApproach, '', 'an answer the type has no prompt for is not saved invisibly');
++  assert.deepEqual([J.createRow(e).mentorPulse, J.createRow(e).mentorComments], ['{}', '[]']);
++  assert.equal(J.contentHash(e), J.contentHash({ ...e, mentorPulse: {}, mentorComments: [] }), 'mentor activity does not make an entry look edited');
++  assert.notEqual(J.contentHash(e), J.contentHash({ ...e, whatISaw: 'a2' }));
++  ok('content row: mentor columns excluded, hidden answers cleared, hash ignores mentor columns');
++}
++
++// ── 3. depth + comments merge ────────────────────────────────────────────────
++{
++  assert.deepEqual(J.applyPulse({ gates: 'surface' }, 'chris', 'connecting'), { gates: 'surface', chris: 'connecting' });
++  assert.deepEqual(J.applyPulse({ gates: 'surface', chris: 'connecting' }, 'chris', 'integrated'), { gates: 'surface', chris: 'integrated' }, 'change');
++  assert.deepEqual(J.applyPulse({ gates: 'surface', chris: 'connecting' }, 'chris', null), { gates: 'surface' }, 'deselect');
++  assert.deepEqual(J.applyPulse('junk', 'chris', 'nope'), {});
++  const c1 = { userId: 'gates', text: 'first', timestamp: '2026-09-19T10:00:00Z' }, c2 = { userId: 'chris', text: 'second', timestamp: '2026-09-19T11:00:00Z' };
++  assert.deepEqual(J.mergeComment([c2], c1).map((c) => c.text), ['first', 'second']); assert.equal(J.mergeComment([c1, c2], c2).length, 2, 'idempotent');
++  assert.equal(J.topDepth({ mentorPulse: { chris: 'surface', gates: 'integrated' } }).id, 'integrated'); assert.equal(J.topDepth({ mentorPulse: {} }), null);
++  ok('depth set / change / deselect; comment merge; top depth');
++}
++
++// ── 4. against the (simulated) Sheet: concurrent writers, upsert, retry, delete, notify ──
++{
++  const e = { ...J.newEntry('personal'), whatISaw: 'Short turns on Go Devil', whatWasGoingOn: 'Felt early edge; video shows a pivot.' };
++  sheet.failNext = 1;                                             // transient failure on the first try
++  assert.equal(await api.saveJournalEntry(e, { isNew: true }), true); assert.equal(await api.saveJournalEntry(e, { isNew: true }), true);
++  assert.equal(sheet.rows.Journal.length, 1, 'transient failure retried; a repeated create never duplicates the row');
++  assert.ok(!sheet.calls.includes('create'), 'update-only: no fall-through to create');
++
++  let { entries, typeColumn } = await api.loadJournal();
++  assert.equal(typeColumn, false); assert.equal(entries[0].typeKnown, false, 'no entryType header → the type is dropped by the script (the live Sheet today)');
++  const markStale = entries[0];                                   // Mark opens the entry…
++  const p = await api.setJournalPulse(e.id, 'chris', 'connecting'); assert.ok(p.ok);      // …Chris assesses depth…
++  const g = await api.appendJournalComment(e.id, { userId: 'gates', text: 'Which ski?', timestamp: '2026-09-19T10:00:00Z' }); assert.ok(g.ok);
++  assert.ok(await api.saveJournalEntry({ ...markStale, whatIDid: 'Slowed the edge change.' }));   // …Mark saves from his stale copy
++  ({ entries } = await api.loadJournal());
++  assert.deepEqual(entries[0].mentorPulse, { chris: 'connecting' }, "Mark's edit did not erase Chris's depth read"); assert.equal(entries[0].mentorComments.length, 1);
++  assert.equal(entries[0].whatIDid, 'Slowed the edge change.');
++  const c = await api.appendJournalComment(e.id, { userId: 'chris', text: 'And what did the ski do?', timestamp: '2026-09-19T11:00:00Z' });   // Chris's copy predates Gates's comment
++  assert.deepEqual(c.mentorComments.map((x) => x.userId), ['gates', 'chris'], 'both comments kept');
++  assert.deepEqual((await api.setJournalPulse(e.id, 'chris', null)).mentorPulse, {}, 'deselect reaches the Sheet');
++  assert.deepEqual((await api.setJournalPulse(e.id, 'gates', 'surface')).mentorPulse, { gates: 'surface' });
++
++  sheet.headers.Journal.push('entryType'); sheet.rows.Journal.forEach((r) => { r.entryType = ''; });   // Mark adds the header
++  assert.ok(await api.saveJournalEntry({ ...entries[0], entryType: 'personal' }));
++  ({ entries, typeColumn } = await api.loadJournal());
++  assert.equal(typeColumn, true); assert.equal(entries[0].entryType, 'personal'); assert.equal(entries[0].typeKnown, true); ok('with the header in place, the type round-trips');
++
++  const note = J.notificationFor(entries[0], 'https://rm-at-developer.vercel.app');
++  const sent = await api.notifyMentors(note.subject, note.body);
++  assert.deepEqual([sent.ok, sent.sent], [true, 1]); assert.equal(sheet.mail[0].to, 'chris@example.com'); assert.match(sheet.mail[0].subject, /New Personal Skiing from Mark/); assert.match(sheet.mail[0].body, /Short turns on Go Devil[\s\S]*rm-at-developer/);
++  assert.deepEqual(J.notifyRecipients(JSON.stringify(profiles)).map((r) => r.key), ['chris'], 'no email / notifications:false are skipped — same rule as the script'); assert.deepEqual(J.notifyRecipients(''), []);
++
++  assert.ok(await api.deleteJournalEntry(e.id));
++  const gone = await api.setJournalPulse(e.id, 'chris', 'surface');
++  assert.deepEqual([gone.ok, gone.reason], [false, 'gone']); assert.equal(sheet.rows.Journal.length, 0, 'a depth tap on a deleted entry does not resurrect an empty row');
++  ok('Sheet simulation: retry, no duplicate, concurrent mentor/candidate writes, deselect, notify, delete guard');
++}
++
++// ── 5. list summary: two lines ───────────────────────────────────────────────
++{
++  const mk = (t, f) => ({ ...J.newEntry(t), ...f });
++  let s = J.listSummary(mk('coaching', { whatISaw: 'Chris challenge no ski to ski or edging at all.\nSki is white pass turns, focus on the inside ski through the top of the turn.', whatWasGoingOn: 'zzz' }));
++  assert.equal(s.title, 'Chris challenge no ski to ski or edging at all.'); assert.match(s.more, /^Ski is white pass/); assert.equal(s.moreLabel, '', 'multi-line first answer: line 2 continues it');
++  s = J.listSummary(mk('study', { whatISaw: 'Root Cause VS Symptom', whatWasGoingOn: 'A symptom is what I see; the cause is what I verify.' }));
++  assert.deepEqual([s.title, s.moreLabel, s.more], ['Root Cause VS Symptom', 'What clicked or connected?', 'A symptom is what I see; the cause is what I verify.'], 'short first answer: line 2 is the next answered prompt, labelled');
++  const long = 'In my own skiing I worked on actively using my lower legs and ankles to tip the skis earlier in the turn, and I noticed that the inside ski kept lagging behind the outside ski on my left turns only.';
++  s = J.listSummary(mk('personal', { whatISaw: long }));
++  assert.ok(s.title.length <= 101 && s.title.endsWith('…') && s.more.length > 25); assert.ok(long.replace(/\s+/g, ' ').includes(s.more.replace(/…$/, '').slice(0, 30)), 'a long single line is split across the two lines, nothing repeated');
++  assert.ok(!s.title.replace('…', '').endsWith(' '));
++  assert.deepEqual(J.listSummary(mk('general', {})), { title: 'Untitled entry', more: '', moreLabel: '' });
++  s = J.listSummary(mk('general', { whatISaw: '', whatWasGoingOn: 'Only the second prompt answered.' })); assert.equal(s.title, 'Only the second prompt answered.');
++  s = J.listSummary(mk('general', { whatISaw: 'x', whyThatApproach: 'hidden under General' })); assert.equal(s.more, '', 'answers the type does not show never reach the list');
++  ok('list summary');
++}
++
++// ── 6. drafts and the Challenge cache ────────────────────────────────────────
++{
++  const e = { ...J.newEntry('clinic'), whatISaw: 'Bumps clinic with Gates' };
++  J.saveDraft('new', e); assert.equal(J.loadDraft('new').whatISaw, e.whatISaw); J.clearDraft('new'); assert.equal(J.loadDraft('new'), null);
++  mem.set('rmat_journal_draft_bad', '{not json'); assert.equal(J.loadDraft('bad'), null);
++  J.saveChallenge(e, 'What would you NOT use that drill for?'); assert.equal(J.loadChallenge(e).text, 'What would you NOT use that drill for?');
++  assert.equal(J.loadChallenge({ ...e, whatISaw: 'edited' }), null, 'an edited entry drops the old challenge');
++  ok('drafts; challenge reply is tied to the text it answered');
++}
++
++// ── 7. Challenge prompt ──────────────────────────────────────────────────────
++{
++  const e = { ...J.newEntry('feedback'), whatISaw: 'Chris after the 9/18 call', themeIds: ['root-cause'], mentorComments: [{ userId: 'chris', text: 'Go to the component parts.', timestamp: 't' }, { userId: 'mark', text: 'my reply', timestamp: 't2' }] };
++  const sys = buildChallengeSystem(e, { mentorAssessments: { chris: { consistentGaps: 'chains lack turn phase', whatsWorking: 'sees interactions' } }, coachNotes: { chris: 'Push on the how.', gates: '  ' }, themes: J.DEFAULT_THEMES, users: USERS });
++  assert.match(sys, /feedback someone gave him/); assert.match(sys, /Can I see past the symptom/); assert.match(sys, /chains lack turn phase/); assert.match(sys, /Chris: Push on the how\./); assert.ok(!/Gates:\s*$/m.test(sys));
++  assert.match(sys, /Chris: Go to the component parts\./); assert.ok(!sys.includes('my reply'), "only mentors' comments are listed as already said");
++  assert.ok(!/\bscores?:|AI Scores|Describe=/i.test(sys), 'reads no scores (§15)');
++  for (const t of Object.keys(J.ENTRY_TYPES)) assert.notEqual(buildChallengeSystem({ entryType: t }), buildChallengeSystem({ entryType: t === 'general' ? 'study' : 'general' }), `${t} has its own brief`);
++  const msg = challengeUserMessage(e, { typeLabel: 'Feedback Received', reflection: J.reflectionText(e), connectionLabels: [] });
++  assert.match(msg, /^Feedback Received — /); assert.match(msg, /Who gave the feedback[\s\S]*Chris after the 9\/18 call/); assert.match(msg, /Connections I tagged: none\./);
++  ok('Challenge prompt: per type, themes, mentor gaps, coach notes, thread; no scores');
++}
++
++// ── 8. every type has prompts on the six shared columns ──────────────────────
++for (const [t, ps] of Object.entries(J.PROMPTS_BY_TYPE)) { assert.ok(J.ENTRY_TYPES[t]); assert.deepEqual(ps.map((p) => p.id), J.FIELDS); assert.ok(J.activePrompts(t).length >= 3); }
++assert.equal(Object.keys(J.ENTRY_TYPES).length, 6); ok('six entry types on the six Sheet columns');
++
++// ── 9. a real export ─────────────────────────────────────────────────────────
++const file = process.argv[2];
++if (file && existsSync(file)) {
++  const raw = JSON.parse(readFileSync(file, 'utf8')); const rows = Array.isArray(raw) ? raw : raw.rows || raw.data || [];
++  const entries = rows.map(J.normalizeJournalRow).filter(Boolean).sort(J.byEntryDesc);
++  for (const e of entries) {
++    const src = rows.find((r) => String(r.id).trim() === e.id), back = J.contentRow(e);
++    if (src) for (const f of [...J.FIELDS, 'context', 'location', 'conditions', 'videoUrl', 'resourceId', 'season', 'timestamp', 'depthLevel']) assert.equal(back[f], String(src[f] ?? '').trim(), `${e.id}.${f} survives load → save`);
++    if (src) for (const f of ['connectionTags', 'themeIds']) assert.deepEqual(JSON.parse(back[f]), JSON.parse(src[f] || '[]'));
++    const s = J.listSummary(e); assert.ok(s.title);
++  }
++  console.log(`     live export: ${rows.length} rows → ${entries.length} entries · entryType column: ${J.hasTypeColumn(rows)} · depth read on ${entries.filter((e) => J.topDepth(e)).length} · ${entries.reduce((a, e) => a + e.mentorComments.length, 0)} comments · undated ${entries.filter((e) => !e.date).length}`);
++  for (const e of entries) { const s = J.listSummary(e); console.log(`     ${J.entryDay(e) || '—'}  ${s.title}\n                 ${s.moreLabel ? `[${s.moreLabel}] ` : ''}${s.more || '(no second line)'}`); }
++  ok('live export round-trips');
++}
++console.log(`\n${n} groups passed`);
+diff --git a/src/App.jsx b/src/App.jsx
+index 021b945..7fc828a 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
+ import { C, font, GLOBAL_CSS } from "./theme.js";
+ import { ATIcon, Card } from "./components/index.jsx";
+ import { USERS } from "./lib/users.js";
+-import { loadConfig, loadMaSessions, sheetHealth } from "./api.js";
++import { loadConfig, loadMaSessions, loadJournal, sheetHealth } from "./api.js";
+ import Sparring from "./tabs/Sparring.jsx";
+ import MAHistory from "./tabs/MAHistory.jsx";
++import Journal from "./tabs/Journal.jsx";
+ import { sealSessions } from "./lib/scorecard.js";
+ import referenceText from "../reference/psia.md?raw";
+ 
+@@ -12,6 +13,7 @@ const OLD_APP = "https://at-dev-tracker.vercel.app";
+ 
+ // Tabs land here one session at a time (§13). Until then, the link to the old app covers the rest.
+ const TABS = [
++  { id: "journal", label: "Journal", roles: ["candidate", "mentor"] },
+   { id: "sparring", label: "Sparring Partner", roles: ["candidate"] },
+   { id: "mahistory", label: "MA History", roles: ["candidate", "mentor"] },
+ ];
+@@ -43,7 +45,7 @@ export default function App() {
+   const [user, setUser] = useState(null);         // { key, ...USERS[key] }
+   const [pending, setPending] = useState(null);   // key awaiting PIN
+   const [tab, setTab] = useState("sparring");
+-  const [data, setData] = useState({ loaded: false, error: false, maSessions: [], config: {} });
++  const [data, setData] = useState({ loaded: false, error: false, maSessions: [], config: {}, journal: { entries: [], typeColumn: null } });
+ 
+   // Background load. The exam never waits on the Sheet: history and mentor notes only feed the examiner's probes.
+   const [loadTick, setLoadTick] = useState(0);
+@@ -52,10 +54,10 @@ export default function App() {
+     let alive = true;
+     setData((d) => ({ ...d, loaded: false, error: false }));
+     (async () => {
+-      const [maSessions, config] = await Promise.all([loadMaSessions(), loadConfig()]);
++      const [maSessions, config, journal] = await Promise.all([loadMaSessions(), loadConfig(), loadJournal()]);
+       if (!alive) return;
+       // Blind scoring (§9): for a mentor, AI summaries of sessions he hasn't scored never enter React state.
+-      setData({ loaded: true, error: sheetHealth.failed.has("MASessions") || sheetHealth.failed.has("Config"), maSessions: sealSessions(maSessions, user), config });
++      setData({ loaded: true, error: ["MASessions", "Config", "Journal"].some((t) => sheetHealth.failed.has(t)), maSessions: sealSessions(maSessions, user), config, journal });
+     })();
+     return () => { alive = false; };
+   }, [user, loadTick]);
+@@ -102,7 +104,7 @@ export default function App() {
+           </div>
+           <div style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+             {visibleTabs.map((t) => (
+-              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}{t.id === "mahistory" && data.maSessions.length ? ` (${data.maSessions.length})` : ""}</button>
++              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}{t.id === "mahistory" && data.maSessions.length ? ` (${data.maSessions.length})` : ""}{t.id === "journal" && data.journal.entries.length ? ` (${data.journal.entries.length})` : ""}</button>
+             ))}
+             <a href={OLD_APP} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12, color: C.dim, textDecoration: "none" }}>Everything else is on the old app ↗</a>
+           </div>
+@@ -119,6 +121,8 @@ export default function App() {
+       <div className="at-container" style={{ padding: "16px 16px 60px" }}>
+         {(
+           <>
++            {tab === "journal" && <Journal user={user} journal={data.journal} loaded={data.loaded} config={data.config} mentorAssessments={mentorAssessments}
++              onEntries={(fn) => setData((d) => ({ ...d, journal: { ...d.journal, entries: fn(d.journal.entries) } }))} />}
+             {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} referenceText={referenceText}
+               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}
+             {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}
+diff --git a/src/api.js b/src/api.js
+index b6b55f7..76442cd 100644
+--- a/src/api.js
++++ b/src/api.js
+@@ -1,5 +1,6 @@
+ // Fetch wrappers for /api/*. Harvested from ATDevelopmentJournal.jsx: response-shape guards on getAll
+ // ({rows}|{data}|array, wrapped in {response}), update-then-create upsert, never throws to the UI.
++import { normalizeJournalRow, hasTypeColumn, byEntryDesc, contentRow, createRow, applyPulse, mergeComment } from "./lib/journal.js";
+ 
+ // The Apps Script endpoint fails transiently: the 302 drops the POST and the proxy hands back a Google HTML page
+ // (seen as 404 / non-JSON), or the script replies "Unknown action: ". Both clear on the next try. Reads AND writes
+@@ -191,3 +192,50 @@ export const deleteMaSession = (sessionId) => apiDelete("MASessions", `ma_${Stri
+ export const scoreLineTry = ({ session, extraction, line, section, passage, original }) =>
+   postJson("/api/score/evaluate", { lines: [line], extraction, section, passage, original: original || null, sessionId: session.id || undefined,
+     session: { type: session.type, context: session.context, who: session.who, activity: session.activity, conditions: session.conditions, sections: session.sections, transcript: Object.keys(session.sections || {}).length ? undefined : session.transcript } });
++
++// ── Journal (session 7) ───────────────────────────────────────────────────────
++// Same write discipline as MA History: Mark's save sends the content columns; a depth tap sends `mentorPulse`; a comment
++// sends `mentorComments` — the last two after re-reading the live row, so nobody writes over anybody from a stale copy.
++
++/** → { entries, typeColumn } — typeColumn false means the Sheet has no `entryType` header and types cannot be saved. */
++export async function loadJournal() {
++  const rows = await apiGet("Journal");
++  return { entries: rows.map(normalizeJournalRow).filter(Boolean).sort(byEntryDesc), typeColumn: hasTypeColumn(rows) };
++}
++
++/** Apps Script `update` creates the row when the id is new, so one call covers both and a retry can never duplicate. */
++export const saveJournalEntry = (entry, { isNew = false } = {}) => apiUpdate("Journal", isNew ? createRow(entry) : contentRow(entry));
++
++async function liveJournalEntry(id) {
++  const rows = await apiGet("Journal");
++  if (sheetHealth.failed.has("Journal")) return { live: null, reason: "unreachable" };
++  const live = rows.map(normalizeJournalRow).filter(Boolean).find((e) => e.id === id) || null;
++  // `update` upserts: writing one column to an id that is gone would resurrect an empty row.
++  return { live, reason: live ? "" : "gone" };
++}
++
++/** value: "surface" | "connecting" | "integrated" | null (deselect). → { ok, reason, mentorPulse } */
++export async function setJournalPulse(id, mentorKey, value) {
++  const { live, reason } = await liveJournalEntry(id);
++  if (!live) return { ok: false, reason, mentorPulse: null };
++  const mentorPulse = applyPulse(live.mentorPulse, mentorKey, value);
++  const ok = await apiUpdate("Journal", { id, mentorPulse: JSON.stringify(mentorPulse) });
++  return { ok, reason: ok ? "" : "write", mentorPulse, mentorComments: live.mentorComments };
++}
++
++/** → { ok, reason, mentorComments } with the merged thread. */
++export async function appendJournalComment(id, item) {
++  const { live, reason } = await liveJournalEntry(id);
++  if (!live) return { ok: false, reason, mentorComments: null };
++  const mentorComments = mergeComment(live.mentorComments, item);
++  const ok = await apiUpdate("Journal", { id, mentorComments: JSON.stringify(mentorComments) });
++  return { ok, reason: ok ? "" : "write", mentorComments, mentorPulse: live.mentorPulse };
++}
++
++export const deleteJournalEntry = (id) => apiDelete("Journal", id);
++
++/** Existing Apps Script `notify` action (mails every `_MENTOR_PROFILES` entry with an email). → { ok, sent, error } */
++export async function notifyMentors(subject, body) {
++  const { ok, data } = await sheetPost({ _action: "notify", _sheet: "Config", subject, body });
++  return { ok: ok && data?.success !== false, sent: Number(data?.sent) || 0, error: data?.error ? String(data.error) : "" };
++}
+diff --git a/src/lib/journal.js b/src/lib/journal.js
+new file mode 100644
+index 0000000..328b2dc
+--- /dev/null
++++ b/src/lib/journal.js
+@@ -0,0 +1,276 @@
++// Journal (§13 row 7): vocabulary, row ↔ entry mapping, and the merge rules for the two mentor-owned columns.
++// Pure — no React, no fetch. Constants are harvested unchanged from ATDevelopmentJournal.jsx so the Sheet, the old
++// app and this one agree on every id.
++//
++// Column ownership (same rule as MA History, §15): Mark's save writes the CONTENT columns only; `mentorPulse` and
++// `mentorComments` are each written by their own call, after a re-read. The old app saved the whole row from memory
++// on every action, so Chris's depth tap and an edit of Mark's could erase each other.
++
++export const DOMAINS = [
++  { id: "ma", label: "Movement Analysis", color: "#e07830" },
++  { id: "skiing", label: "Skiing Performance", color: "#3088cc" },
++  { id: "biomechanics", label: "Biomechanics", color: "#28a858" },
++  { id: "physics", label: "Physics & Forces", color: "#a0a0d0" },
++  { id: "skidesign", label: "Ski Design", color: "#90b050" },
++  { id: "tactics", label: "Tactics & Line", color: "#c060a0" },
++  { id: "teaching", label: "Teaching & Progression", color: "#e8a050" },
++  { id: "groupdynamics", label: "Group Dynamics", color: "#6a90d0" },
++  { id: "terrain", label: "Terrain & Conditions", color: "#70b870" },
++  { id: "psychology", label: "Psychology & Mindset", color: "#d06060" },
++  { id: "cap", label: "CAP Integration", color: "#d0a040" },
++];
++
++export const CONTEXTS = ["Clinic", "Free Skiing", "Shadow", "Assessment Task", "Training", "Self-Study", "Peer Observation"];
++
++// Ordered low → high; topDepth() relies on the order.
++export const PULSE_OPTIONS = [
++  { id: "surface", label: "Surface", desc: "Described what happened but not why", color: "#e05028", icon: "△" },
++  { id: "connecting", label: "Connecting", desc: "Linked cause and effect across domains", color: "#e07830", icon: "◇" },
++  { id: "integrated", label: "Integrated", desc: "Hit the mark — saw the whole picture", color: "#28a858", icon: "★" },
++];
++
++export const ENTRY_TYPES = {
++  coaching: { label: "On-Hill Coaching / MA", icon: "🎿" },
++  personal: { label: "Personal Skiing", icon: "⛷" },
++  clinic: { label: "Clinic Attended", icon: "📋" },
++  feedback: { label: "Feedback Received", icon: "💬" },
++  study: { label: "Study / Reading / Video", icon: "📖" },
++  general: { label: "General Note", icon: "📝" },
++};
++
++/** The six text columns, in Sheet order. Every entry type maps its prompts onto these same columns. */
++export const FIELDS = ["whatISaw", "whatWasGoingOn", "whatIDid", "whyThatApproach", "whatHappened", "whatIdDoDifferently"];
++
++const P = (rows) => rows.map(([label, placeholder], i) => ({ id: FIELDS[i], label, placeholder }));
++export const PROMPTS_BY_TYPE = {
++  coaching: P([
++    ["What did I see?", "Describe the moment — what was happening with the student, the group, or the skier you observed..."],
++    ["What was really going on underneath?", "Root cause — connect the symptom to the underlying issue. Why was this happening?"],
++    ["What did I do about it?", "Your teaching decision — terrain choice, exercise, progression, demo, verbal cue..."],
++    ["Why that approach and not another?", "What made you choose this over other options? What were you considering?"],
++    ["What happened?", "The outcome — did it work? What changed? What didn't change?"],
++    ["What would I do differently?", "Knowing what you know now — what would you change? What did you learn?"],
++  ]),
++  personal: P([
++    ["What was I working on?", "My focus for this session — what skill, movement, or feeling was I targeting?"],
++    ["What did I feel vs what was actually happening?", "The gap between intention and execution — what sensations did I notice? What was actually going on?"],
++    ["What adjustments did I make?", "What did I try? Terrain changes, focus shifts, drills, mental cues..."],
++    ["What worked and what didn't?", "Which adjustments produced change? Which ones didn't? Why?"],
++    ["Where am I now vs where I started?", "Did the session move me forward? What's the current state of this skill?"],
++    ["What will I try next?", "Next session focus — what will I carry forward, what will I change?"],
++  ]),
++  clinic: P([
++    ["What was the subject / focus?", "Topic of the clinic — who led it, what was the intended learning?"],
++    ["Key takeaways", "The 2-3 things that stuck — concepts, drills, frameworks, aha moments..."],
++    ["How does this connect to my development?", "Link to your AT gaps, your themes, or something your mentors have been pushing on..."],
++    ["What resonated most and why?", "The thing that clicked — why did it land? What shifted in your understanding?"],
++    ["What will I apply or try?", "Concrete next steps — what will you do differently because of this clinic?"],
++    ["Questions that remain", "What are you still unsure about? What do you want to explore further?"],
++  ]),
++  feedback: P([
++    ["Who gave the feedback and what was the context?", "Chris after watching me teach, Gates during a training session, a peer after a clinic..."],
++    ["What did they say?", "Capture the feedback as accurately as you can — their words, their observations..."],
++    ["What resonated?", "Which parts landed? What do you agree with or see in yourself?"],
++    ["What challenged me?", "Which parts were hard to hear or that you're not sure about?"],
++    ["How does this connect to other feedback?", "Is this a pattern? Have you heard this before? Does it connect to your themes?"],
++    ["What will I work on?", "Concrete action — what changes based on this feedback?"],
++  ]),
++  study: P([
++    ["What did I read, watch, or study?", "Article, video, manual section — include link if you have one..."],
++    ["What clicked or connected?", "The concept or insight that resonated — what did you understand differently after?"],
++    ["How does this relate to something I'm working on?", "Connect to your skiing, your teaching, your AT development, your themes..."],
++    ["How does this change my understanding?", "What did you think before vs after? What shifted?"],
++    ["How will I apply this?", "Next time on snow, in a clinic, or doing an MA — how will this show up?"],
++    ["What do I want to explore further?", "Follow-up reading, questions to ask mentors, things to try..."],
++  ]),
++  general: P([
++    ["What's on my mind?", "Free form — capture whatever is relevant to your development right now..."],
++    ["Why does this matter?", "Why is this worth noting? How does it connect to your bigger picture?"],
++    ["Additional thoughts", "Anything else you want to capture..."],
++    ["", ""], ["", ""], ["", ""],
++  ]),
++};
++
++// Config._THEMES is empty in the live Sheet; the old app falls back to these, and existing entries are tagged with these ids.
++export const DEFAULT_THEMES = [
++  { id: "root-cause", question: "Can I see past the symptom to the root cause?", description: "The MA leap from L3 to AT. Connecting multiple skill interactions to explain why — using 3+ skills simultaneously.", active: true },
++  { id: "design-adapt", question: "Can I design and adapt in the moment?", description: "Progression design, terrain selection, exercise choice — and changing the plan when it's not working.", active: true },
++  { id: "skiing-expression", question: "Does my skiing express what I'm teaching?", description: "Intentional demonstration — showing the specific blend you're prescribing, on command.", active: true },
++];
++
++/** Themes from Config (JSON string or array); falls back to the defaults exactly as the old app does. */
++export function themesFromConfig(raw) {
++  let list = raw;
++  if (typeof raw === "string") { try { list = raw.trim() ? JSON.parse(raw) : null; } catch { list = null; } }
++  return Array.isArray(list) && list.length ? list : DEFAULT_THEMES;
++}
++
++export const getCurrentSeason = (now = new Date()) => {
++  const y = now.getFullYear();
++  return now.getMonth() >= 9 ? `${String(y).slice(2)}/${String(y + 1).slice(2)}` : `${String(y - 1).slice(2)}/${String(y).slice(2)}`;
++};
++
++const uid = () => Math.random().toString(36).slice(2, 9);
++const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
++
++export const newEntry = (entryType = "coaching") => ({
++  id: uid(), date: localDay(), entryType, typeKnown: true, context: CONTEXTS[0], location: "", conditions: "",
++  ...Object.fromEntries(FIELDS.map((f) => [f, ""])),
++  videoUrl: "", connectionTags: [], themeIds: [], depthLevel: "", resourceId: "",
++  season: getCurrentSeason(), timestamp: new Date().toISOString(), mentorPulse: {}, mentorComments: [],
++});
++
++// ── Sheet row → entry ────────────────────────────────────────────────────────
++const parse = (v, fb) => { if (v == null || v === "") return fb; if (typeof v !== "string") return v; try { const p = JSON.parse(v); return p ?? fb; } catch { return fb; } };
++const arr = (v) => (Array.isArray(v) ? v : []);
++const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
++
++/** A date cell the Sheet reformatted ("Tue Apr 21 2026 …") comes back as yyyy-mm-dd; anything unreadable as "". */
++export function cleanDate(v) {
++  const s = String(v ?? "").trim();
++  if (!s) return "";
++  const iso = s.match(/^\d{4}-\d{2}-\d{2}/);
++  if (iso) return iso[0];
++  const d = new Date(s);
++  return Number.isNaN(d.getTime()) ? "" : localDay(d);
++}
++
++/**
++ * Harvested guards: Config (`_…`) and MA (`ma_…`) rows that older migrations left in this tab are skipped; an id-less
++ * row is kept only if it has content, and gets a stable id derived from its timestamp (the old app gave it a random
++ * one on every load, so it could never be updated). JSON columns parse-or-default, and each is type-checked.
++ */
++export function normalizeJournalRow(r) {
++  if (!r || typeof r !== "object") return null;
++  let id = String(r.id ?? "").trim();
++  if (id.startsWith("_") || id.startsWith("ma_") || /^(cp|vid|clinic)_/.test(id)) return null;
++  const hasContent = FIELDS.some((f) => String(r[f] ?? "").trim()) || String(r.date ?? "").trim() || String(r.context ?? "").trim();
++  if (!id && !hasContent) return null;
++  if (!id) id = `row_${String(r.timestamp || r.date || "").replace(/\W/g, "").slice(0, 17) || "x"}`;
++  const rawType = String(r.entryType ?? "").trim();
++  const typeKnown = !!ENTRY_TYPES[rawType];
++  const pulse = Object.fromEntries(Object.entries(obj(parse(r.mentorPulse, {}))).filter(([, v]) => PULSE_OPTIONS.some((p) => p.id === v)));
++  return {
++    id, date: cleanDate(r.date), entryType: typeKnown ? rawType : "coaching", typeKnown,
++    context: String(r.context ?? ""), location: String(r.location ?? ""), conditions: String(r.conditions ?? ""),
++    ...Object.fromEntries(FIELDS.map((f) => [f, String(r[f] ?? "")])),
++    videoUrl: String(r.videoUrl ?? ""), connectionTags: arr(parse(r.connectionTags, [])).map(String), themeIds: arr(parse(r.themeIds, [])).map(String),
++    depthLevel: String(r.depthLevel ?? ""), resourceId: String(r.resourceId ?? ""), season: String(r.season ?? ""), timestamp: String(r.timestamp ?? ""),
++    mentorPulse: pulse,
++    mentorComments: arr(parse(r.mentorComments, [])).filter((c) => c && typeof c.text === "string" && c.text.trim()),
++  };
++}
++
++/**
++ * Does the Journal tab have an `entryType` column? The Apps Script writes only keys that match a header, and the tab
++ * it auto-creates has none — so the old app has never persisted an entry's type. getAll returns every header as a key
++ * on every row, so one row is enough to tell. null = no rows to judge from.
++ */
++export function hasTypeColumn(rawRows) {
++  const rows = (rawRows || []).filter((r) => r && typeof r === "object");
++  return rows.length ? rows.some((r) => Object.prototype.hasOwnProperty.call(r, "entryType")) : null;
++}
++
++export const entryDay = (e) => e.date || cleanDate(e.timestamp);
++/** Newest first; date, then timestamp, then id — never an unstable order between two entries on one day. */
++export const byEntryDesc = (a, b) => entryDay(b).localeCompare(entryDay(a)) || String(b.timestamp || "").localeCompare(String(a.timestamp || "")) || String(b.id).localeCompare(String(a.id));
++
++// ── entry → Sheet row ────────────────────────────────────────────────────────
++export const activePrompts = (type) => (PROMPTS_BY_TYPE[type] || PROMPTS_BY_TYPE.coaching).filter((p) => p.label);
++
++/**
++ * The candidate-owned columns. A field the entry's type has no prompt for is written empty: switching a drafted
++ * Coaching entry to General Note would otherwise save three answers nobody can see or edit.
++ * Never includes mentorPulse / mentorComments.
++ */
++export function contentRow(entry) {
++  const shown = new Set(activePrompts(entry.entryType).map((p) => p.id));
++  return {
++    id: entry.id, date: entry.date || "", entryType: entry.entryType || "coaching",
++    context: entry.context || "", location: entry.location || "", conditions: entry.conditions || "",
++    ...Object.fromEntries(FIELDS.map((f) => [f, shown.has(f) ? String(entry[f] || "").trim() : ""])),
++    videoUrl: (entry.videoUrl || "").trim(), connectionTags: JSON.stringify(entry.connectionTags || []), themeIds: JSON.stringify(entry.themeIds || []),
++    depthLevel: entry.depthLevel || "", resourceId: entry.resourceId || "",
++    season: entry.season || getCurrentSeason(), timestamp: entry.timestamp || new Date().toISOString(),
++  };
++}
++/** First write of a new entry also initialises the two mentor columns. */
++export const createRow = (entry) => ({ ...contentRow(entry), mentorPulse: "{}", mentorComments: "[]" });
++
++/** Hash-diff (harvested idea): an edit that changes nothing writes nothing. */
++export const contentHash = (entry) => JSON.stringify(contentRow(entry));
++export const hasText = (entry) => activePrompts(entry.entryType).some((p) => String(entry[p.id] || "").trim());
++
++// ── mentor columns: merge against the live row ───────────────────────────────
++/** value = pulse id to set, or null to deselect. Only this mentor's key changes; everyone else's is the live value. */
++export function applyPulse(livePulse, mentorKey, value) {
++  const next = { ...obj(livePulse) };
++  if (value && PULSE_OPTIONS.some((p) => p.id === value)) next[mentorKey] = value; else delete next[mentorKey];
++  return next;
++}
++const commentKey = (c) => `${c.userId}|${c.timestamp}|${String(c.text || "").slice(0, 40)}`;
++export function mergeComment(liveComments, item) {
++  const merged = [...arr(liveComments)];
++  if (!merged.some((c) => commentKey(c) === commentKey(item))) merged.push(item);
++  return merged.sort((a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
++}
++
++/** Badge on the list: the highest depth any mentor gave (as the old app), with who gave it. */
++export function topDepth(entry) {
++  const given = Object.entries(entry.mentorPulse || {});
++  if (!given.length) return null;
++  let best = null;
++  for (const [who, id] of given) { const i = PULSE_OPTIONS.findIndex((p) => p.id === id); if (i >= 0 && (!best || i > best.i)) best = { i, who }; }
++  return best ? { ...PULSE_OPTIONS[best.i], who: best.who, count: given.length } : null;
++}
++
++// ── list card text ───────────────────────────────────────────────────────────
++const clip = (s, n) => { const t = s.replace(/\s+/g, " ").trim(); if (t.length <= n) return t; const cut = t.slice(0, n); return `${cut.slice(0, cut.lastIndexOf(" ") > n * 0.6 ? cut.lastIndexOf(" ") : n).replace(/[,;:\s]+$/, "")}…`; };
++
++/**
++ * Two lines for the list (Mark, session 7: one line wasn't enough to tell entries apart).
++ * title — the first line of the first answered prompt. more — what follows it: the rest of that same answer when it
++ * ran on, otherwise the next answered prompt, labelled so it reads as an answer and not as a continuation.
++ */
++export function listSummary(entry, { titleLen = 100, moreLen = 170 } = {}) {
++  const answered = activePrompts(entry.entryType).map((p) => ({ label: p.label, text: String(entry[p.id] || "").trim() })).filter((x) => x.text);
++  if (!answered.length) return { title: "Untitled entry", more: "", moreLabel: "" };
++  const first = answered[0].text;
++  const lines = first.split(/\n+/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
++  let head = lines[0], rest = lines.slice(1).join(" ");
++  if (head.length > titleLen) { const t = clip(head, titleLen); rest = `${head.slice(t.length - 1).replace(/^[\s,;:]+/, "")} ${rest}`.trim(); head = t; }
++  if (rest.length >= 25) return { title: head, more: clip(rest, moreLen), moreLabel: "" };
++  const next = answered[1];
++  return next ? { title: head, more: clip(next.text, moreLen), moreLabel: next.label } : { title: head, more: "", moreLabel: "" };
++}
++
++/** Plain-text rendering of an entry under its own type's prompts — what Challenge Me and the email preview read. */
++export const reflectionText = (entry) => activePrompts(entry.entryType).map((p) => (String(entry[p.id] || "").trim() ? `${p.label}\n${String(entry[p.id]).trim()}` : "")).filter(Boolean).join("\n\n");
++
++export function notificationFor(entry, appUrl) {
++  const label = ENTRY_TYPES[entry.entryType]?.label || "Journal Entry";
++  const s = listSummary(entry, { titleLen: 140, moreLen: 240 });
++  return {
++    subject: `AT Journal: New ${label} from Mark`,
++    body: `Mark added a new ${label} (${entry.date || "today"}${entry.context ? ` · ${entry.context}` : ""}):\n\n${s.title}${s.more ? `\n${s.moreLabel ? `${s.moreLabel} ` : ""}${s.more}` : ""}\n\nRead it and mark the depth: ${appUrl}`,
++  };
++}
++
++/** Who the Apps Script will mail: profiles with an email and notifications not switched off. */
++export function notifyRecipients(rawProfiles) {
++  const profiles = obj(parse(rawProfiles, {}));
++  return Object.entries(profiles).filter(([, p]) => p && p.email && p.notifications !== false).map(([key, p]) => ({ key, email: String(p.email) }));
++}
++
++// ── drafts (localStorage; one per entry id, "new" for an unsaved entry) ──────
++const DRAFT = (id) => `rmat_journal_draft_${id}`;
++const ls = () => { try { return typeof window !== "undefined" ? window.localStorage : null; } catch { return null; } };
++export function loadDraft(id) { try { const raw = ls()?.getItem(DRAFT(id)); const d = raw ? JSON.parse(raw) : null; return d && typeof d === "object" && d.id ? d : null; } catch { return null; } }
++export function saveDraft(id, entry) { try { ls()?.setItem(DRAFT(id), JSON.stringify(entry)); } catch { /* quota / private mode */ } }
++export function clearDraft(id) { try { ls()?.removeItem(DRAFT(id)); } catch { /* ignore */ } }
++
++// Challenge Me replies are kept per entry AND per text: edit the entry and the old challenge no longer applies.
++const CH = (id) => `rmat_journal_challenge_${id}`;
++const textKey = (entry) => { const s = reflectionText(entry); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return `${s.length}:${h}`; };
++export function loadChallenge(entry) { try { const d = JSON.parse(ls()?.getItem(CH(entry.id)) || "null"); return d && d.key === textKey(entry) ? d : null; } catch { return null; } }
++export function saveChallenge(entry, text) { try { ls()?.setItem(CH(entry.id), JSON.stringify({ key: textKey(entry), text, at: new Date().toISOString() })); } catch { /* ignore */ } }
+diff --git a/src/lib/prompts.js b/src/lib/prompts.js
+index bd9a00a..f7326dd 100644
+--- a/src/lib/prompts.js
++++ b/src/lib/prompts.js
+@@ -289,3 +289,43 @@ export function buildScoreInput(exam, { pastSessions = [], parseSummary }) {
+   }
+   return `SCORE ONLY WHAT THE EXAMINER HEARD:\n\nPEER DIALOG (examiner observed):\n${dialogText}\n\nPRESCRIPTION DELIVERY TO PEER (examiner observed):\n${prescribeText}\n\nMARK'S PRESENTATION TO EXAMINER:\n${exam.presentation}\n\nEXAMINER Q&A:\n${debriefText}${revisionContext}${pastContext}\n\nContext: ${exam.who}, ${exam.activity}, ${exam.conditions}\n\nScore ONLY what the examiner heard. Do NOT consider any private notes. Evaluate: (1) Did he connect the task to the subject's intent when delivering it? (2) Did he explain the technical WHY to the examiner?\n\nRESPOND ONLY IN JSON (no markdown, no backticks). CHECK FROM THE TOP DOWN starting at 5: Does candidate extend beyond expected with autonomous skill? If yes, 5. Then check 4: appears regularly at AT standard? If yes, 4. If something missing, verify 4-level gap not 5-level. Only 3 if genuine 4-level element absent.\n${SCORE_JSON_SHAPE}`;
+ }
++
++// ── Journal: Challenge Me (session 7) ────────────────────────────────────────────────────────────
++// Replaces the old app's use of the whole eight-layer sparring prompt (reference text, four MA transcripts with the old
++// scorer's numbers, videos, clinics, checkpoints) for a one-shot reply to one reflection. This prompt reads no scores
++// (§15: nothing but scorecard() reads them) and is told what KIND of entry it is looking at — the old one challenged a
++// clinic note as if it were an MA.
++const CHALLENGE_BY_TYPE = {
++  coaching: "This is a reflection on coaching or analyzing a skier. Test the analysis: is the root cause a cause or another symptom; where in the turn, which ski, which joint; does each link say HOW one thing produced the next, through to what the ski did and what that did to the outcome the skier wanted; was the intent verified before the diagnosis; does the teaching decision follow from the cause he named.",
++  personal: "This is about his own skiing. Test the gap between what he felt and what the ski actually did: how does he know; what would someone watching have seen; which fundamental was he changing and what did it do to the others; what on the snow told him it worked. An Alpine Trainer has to demonstrate on command — push toward what he can reproduce, not what felt good once.",
++  clinic: "This is a clinic he attended. Do not re-teach the clinic. Test whether the takeaways are his own understanding or the clinician's phrases: can he explain the mechanism behind a drill he liked; whom would he NOT use it with; how does it change what he does with an instructor he is training.",
++  feedback: "This is feedback someone gave him. Do not judge the feedback. Test what he did with it: did he record what was said or what he wanted to hear; what evidence in his own work confirms or contradicts it; is the action he chose aimed at the cause of the pattern or at its symptom.",
++  study: "This is something he read or watched. Test transfer: can he state the idea in his own words with a skiing example the source did not use; where does it break down; what would he see in a skier, on snow, that this idea explains better than what he believed before.",
++  general: "This is a free-form note. Find the claim inside it and test that. If there is no claim, ask for one.",
++};
++
++/**
++ * @param {{entryType:string}} entry
++ * @param {object} ctx  mentorAssessments (Config._MENTOR_ASSESSMENTS), coachNotes (Config._COACH_NOTES), themes, users
++ */
++export function buildChallengeSystem(entry, { mentorAssessments, coachNotes, themes = [], users } = {}) {
++  const tagged = themes.filter((t) => (entry.themeIds || []).includes(t.id));
++  const notes = Object.entries(coachNotes || {}).filter(([, v]) => typeof v === "string" && v.trim());
++  const thread = (entry.mentorComments || []).filter((c) => users?.[c.userId]?.role === "mentor");
++  return `You are challenging one journal reflection written by Mark, a PSIA Level 3 instructor working toward Alpine Trainer (AT). An AT trains instructors. His assessor, Chris, describes AT-level thinking as: X led to Y which led to Z, tied to the task and to what the skier intended, with "the how" stated at each link — and equipment, biomechanics and the desired performance treated as one connected picture. Level 3 thinking is accurate and links two things; AT thinking sees the whole, names what drives it, and can say how.
++
++${CHALLENGE_BY_TYPE[entry.entryType] || CHALLENGE_BY_TYPE.general}
++
++HOW TO RESPOND
++- Read what he actually wrote. Never ask for something the reflection already contains; never challenge a claim he did not make.
++- At most three challenges, the most important first. Each one: quote or name the exact sentence you are pushing on, say what is missing or unproven in it, then ask ONE question he could answer in the journal or on snow. No lists of questions.
++- If a connection he tagged is not visible in the text, say which one. If the text makes a connection he did not tag, say that instead — once.
++- If a link in his reasoning is sound, say so in one sentence. Do not praise the rest.
++- Do not supply the answer, do not rewrite his reflection, do not give a score or a level, and do not use the words Surface, Connecting or Integrated — judging depth is his mentors' call.
++- Plain text, under 220 words. No headings, no bullet symbols, no bold.${tagged.length ? `\n\nTHEMES HE SAYS THIS ENTRY PUSHES ON (hold him to them):\n${tagged.map((t) => `- ${t.question}`).join("\n")}` : ""}${mentorGapsBlock(mentorAssessments, users).replace("probe the consistent gaps first", "where a gap shows up in THIS reflection, challenge there first")}${notes.length ? `\n\nCOACHING NOTES FROM HIS MENTORS (how they want him pushed):\n${notes.map(([k, v]) => `${users?.[k]?.name || k}: ${v.trim().slice(0, 600)}`).join("\n")}` : ""}${thread.length ? `\n\nHIS MENTORS HAVE ALREADY SAID THIS ABOUT THIS ENTRY — do not repeat it; go where they have not:\n${thread.map((c) => `${users?.[c.userId]?.name || c.userId}: ${c.text.trim().slice(0, 400)}`).join("\n")}` : ""}`;
++}
++
++export function challengeUserMessage(entry, { typeLabel, reflection, connectionLabels = [] }) {
++  const where = [entry.date, entry.context, entry.location, entry.conditions].filter(Boolean).join(" · ");
++  return `${typeLabel}${where ? ` — ${where}` : ""}\n\n${reflection}\n\nConnections I tagged: ${connectionLabels.length ? connectionLabels.join(", ") : "none"}.\n\nChallenge my thinking.`;
++}
+diff --git a/src/lib/resources.js b/src/lib/resources.js
+new file mode 100644
+index 0000000..f807592
+--- /dev/null
++++ b/src/lib/resources.js
+@@ -0,0 +1,52 @@
++// Learning experiences from the AT Program Guide. Harvested verbatim from ATDevelopmentJournal.jsx (session 7, for the
++// Journal's "inspired by a resource" link); the Resources tab (session 10) reads the same list.
++export const RESOURCES = {
++  "Theme 1 — Root Cause": {
++    color: "#e07830",
++    themeId: "root-cause",
++    items: [
++      { id: "R-MA1", title: "Multiple skill-to-skill cause-effect analysis", desc: "Observe a skier and identify 3+ interacting skills. Trace the primary cause." },
++      { id: "R-MA2", title: "Blended MA using 3+ skills simultaneously", desc: "Practice analyzing movement through multiple lenses at once." },
++      { id: "R-MA3", title: "Biomechanics, physics, ski design applied to MA", desc: "Connect what you see to the physics of why it's happening." },
++      { id: "R-MA4", title: "Center Line and Common Threads in MA", desc: "Use the PSIA frameworks to deepen your analysis." },
++      { id: "R-MA5", title: "Prescribe IDP activity + variations", desc: "Design an activity based on your MA — show the connection from diagnosis to prescription." },
++    ]
++  },
++  "Theme 2 — Design & Adapt": {
++    color: "#e8a050",
++    themeId: "design-adapt",
++    items: [
++      { id: "R-CL1", title: "Create learning objectives from MA", desc: "Turn your analysis into a clear, achievable objective for the student." },
++      { id: "R-CL2", title: "Plan and adapt learning experiences", desc: "Design a progression — then change it when conditions or students require it." },
++      { id: "R-CL3", title: "Adapt to resort needs and diverse groups", desc: "Lead a session with mixed abilities or unexpected constraints." },
++      { id: "R-CL4", title: "Foster reflection and 2-way communication", desc: "Get students thinking, not just doing. Ask questions that reveal understanding." },
++      { id: "R-CL5", title: "Provide effective feedback", desc: "Practice timing, specificity, and framing of feedback that lands." },
++      { id: "R-CL6", title: "Lead a 25-minute clinic", desc: "Full clinic experience — intro, assessment, progression, feedback, wrap-up." },
++      { id: "R-CL7", title: "Foster positive group interaction", desc: "Encourage peer learning, group discussion, and collaborative goal-setting." },
++    ]
++  },
++  "Theme 3 — Skiing Expression": {
++    color: "#3088cc",
++    themeId: "skiing-expression",
++    items: [
++      { id: "R-SK1", title: "Individual fundamental tasks", desc: "Pivot slips, hop turns, White Pass, stem Christie, outside ski turns — demonstrate with intention." },
++      { id: "R-SK2", title: "Center Line milestone demonstrations", desc: "Wedge turn through dynamic parallel — show each with clarity and purpose." },
++      { id: "R-SK3", title: "Performance versatility", desc: "Short/medium/long turns, bumps, variable terrain — adapt your skiing to express intent." },
++      { id: "R-SK4", title: "Express intent of tactical choices", desc: "Show the connection between what you're demonstrating and why." },
++      { id: "R-SK5", title: "Adapt skiing to varying conditions", desc: "Ice, powder, crud, steeps — demonstrate how your skiing changes and why." },
++    ]
++  },
++  "General Development": {
++    color: "#7a9ab5",
++    themeId: null,
++    items: [
++      { id: "R-GEN1", title: "Professionalism & self-management", desc: "Preparation, punctuality, communication with supervisors, self-regulation." },
++      { id: "R-GEN2", title: "Tactical analysis", desc: "Speed, line, turn shape, edge grip — read the mountain." },
++      { id: "R-GEN3", title: "Trust and safety management", desc: "Physical and emotional safety — how you create the environment." },
++      { id: "R-GEN4", title: "Interpersonal dynamics management", desc: "Reading the room, managing conflict, adapting communication style." },
++    ]
++  },
++};
++
++export const ALL_RESOURCES = Object.values(RESOURCES).flatMap((r) => r.items);
++export const resourceById = (id) => ALL_RESOURCES.find((r) => r.id === id) || null;
+diff --git a/src/tabs/Journal.jsx b/src/tabs/Journal.jsx
+new file mode 100644
+index 0000000..c1ceff2
+--- /dev/null
++++ b/src/tabs/Journal.jsx
+@@ -0,0 +1,203 @@
++// Journal (§13 row 7). Same look as the old tab. What changed and why:
++//  · the list shows two lines of each entry, not one (Mark, session 7);
++//  · the form's working copy persists on the device, and a failed save keeps it;
++//  · Mark's save, a mentor's depth tap and a comment each write their own columns after re-reading (src/api.js);
++//  · the notification fires after the Sheet has CONFIRMED the new entry, and its result is shown;
++//  · Challenge Me has its own prompt, knows the entry's type, reads no scores, and its reply survives "Back".
++import React, { useState } from "react";
++import { C } from "../theme.js";
++import { Card, SectionLabel, Button, Hint, SpeakButton } from "../components/index.jsx";
++import { USERS } from "../lib/users.js";
++import { DOMAINS, ENTRY_TYPES, activePrompts, byEntryDesc, contentHash, entryDay, listSummary, topDepth, newEntry, loadDraft, clearDraft, reflectionText, notificationFor, notifyRecipients, themesFromConfig, loadChallenge, saveChallenge } from "../lib/journal.js";
++import { resourceById } from "../lib/resources.js";
++import { buildChallengeSystem, challengeUserMessage } from "../lib/prompts.js";
++import { callClaude, saveJournalEntry, deleteJournalEntry, notifyMentors } from "../api.js";
++import JournalEntryForm from "./JournalEntryForm.jsx";
++import JournalThread from "./JournalThread.jsx";
++
++const back = { background: "none", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", padding: "0 0 10px", fontWeight: 600, fontFamily: "inherit" };
++const Tag = ({ d, big }) => <span style={{ fontSize: big ? 12 : 10, fontWeight: 600, padding: big ? "3px 8px" : "2px 6px", borderRadius: big ? 4 : 3, background: `${d.color}12`, border: big ? `1px solid ${d.color}25` : "none", color: d.color }}>{d.label}</span>;
++const meta = (e, full) => [entryDay(e) || "no date", e.context, e.location, full ? e.conditions : ""].filter(Boolean).join(" · ");
++
++export default function Journal({ user, journal, loaded, config, mentorAssessments, onEntries, openId = null }) {
++  const isMentor = user.role === "mentor";
++  const entries = journal.entries;
++  const themes = themesFromConfig(config?._THEMES);
++  const activeThemes = themes.filter((t) => t.active !== false);
++  const [mode, setMode] = useState(openId ? { view: "entry", id: openId } : { view: "list" });   // list | entry{id} | edit{id|null}; openId lets another tab (or a test) land on one entry
++  const [themeFilter, setThemeFilter] = useState(null);
++  const [notice, setNotice] = useState(null);                   // { id, tone, text } — notification result for a just-created entry
++  const [draftTick, setDraftTick] = useState(0);                // re-read localStorage after a discard
++
++  const put = (entry) => onEntries((prev) => [entry, ...prev.filter((x) => x.id !== entry.id)].sort(byEntryDesc));
++  const current = mode.id ? entries.find((x) => x.id === mode.id) : null;
++
++  // ── edit ──
++  if (mode.view === "edit") {
++    const saved = current || null;
++    const draft = loadDraft(saved ? saved.id : "new");
++    const initial = draft ? { ...(saved || {}), ...draft, mentorPulse: saved?.mentorPulse || {}, mentorComments: saved?.mentorComments || [] } : saved ? { ...saved } : newEntry();
++    const onSave = async (entry) => {
++      if (saved && contentHash(entry) === contentHash(saved)) { clearDraft(saved.id); setMode({ view: "entry", id: saved.id }); return true; }
++      const ok = await saveJournalEntry(entry, { isNew: !saved });
++      if (!ok) return false;
++      clearDraft(saved ? saved.id : "new");
++      put({ ...entry, mentorPulse: saved?.mentorPulse || {}, mentorComments: saved?.mentorComments || [] });
++      setMode({ view: "entry", id: entry.id });
++      if (!saved) {
++        // Only once the row exists (the old app mailed mentors before the write had been answered).
++        setNotice({ id: entry.id, tone: C.dim, text: "Saved. Notifying your mentors…" });
++        const { subject, body } = notificationFor(entry, typeof window !== "undefined" ? window.location.origin : "");
++        const r = await notifyMentors(subject, body);
++        setNotice({ id: entry.id, ...(r.ok && r.sent > 0 ? { tone: C.green, text: `Saved. Email sent to ${r.sent} mentor${r.sent > 1 ? "s" : ""}.` } : { tone: C.amber, text: `Saved — but no notification email went out${r.error ? ` (${r.error})` : r.ok ? " (no mentor profile has an email)" : ""}.`, retry: { subject, body } }) });
++      }
++      return true;
++    };
++    return <JournalEntryForm key={`${saved?.id || "new"}:${draftTick}`} initial={initial} saved={saved} restored={!!draft} themes={themes} typeColumn={journal.typeColumn}
++      recipients={notifyRecipients(config?._MENTOR_PROFILES)} onSave={onSave}
++      onBack={() => setMode(saved ? { view: "entry", id: saved.id } : { view: "list" })}
++      onDiscard={() => { setDraftTick((n) => n + 1); setMode(saved ? { view: "entry", id: saved.id } : { view: "list" }); }} />;
++  }
++
++  // ── one entry ──
++  if (mode.view === "entry" && current) {
++    const e = current;
++    const type = e.typeKnown ? ENTRY_TYPES[e.entryType] : null;
++    const res = e.resourceId ? resourceById(e.resourceId) : null;
++    const tagged = themes.filter((t) => (e.themeIds || []).includes(t.id));
++    return (
++      <div>
++        <button onClick={() => setMode({ view: "list" })} style={back}>← Back</button>
++        {notice?.id === e.id && (
++          <div style={{ fontSize: 12, color: notice.tone, marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
++            <span>{notice.text}</span>
++            {notice.retry && <button onClick={async () => { const rt = notice.retry; setNotice({ id: e.id, tone: C.dim, text: "Sending…" }); const r = await notifyMentors(rt.subject, rt.body); setNotice({ id: e.id, ...(r.ok && r.sent > 0 ? { tone: C.green, text: `Email sent to ${r.sent} mentor${r.sent > 1 ? "s" : ""}.` } : { tone: C.amber, text: `Still not sent${r.error ? ` (${r.error})` : ""}.`, retry: rt }) }); }} style={{ background: "none", border: `1px solid ${C.amber}60`, borderRadius: 5, color: C.amber, fontSize: 12, padding: "2px 8px", cursor: "pointer", fontFamily: "inherit" }}>Send again</button>}
++          </div>
++        )}
++        <Card>
++          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 }}>
++            <div style={{ fontSize: 12, color: C.muted }}>{type ? `${type.icon} ${type.label} · ` : ""}{meta(e, true)}</div>
++            {!isMentor && <button onClick={() => setMode({ view: "edit", id: e.id })} style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: C.muted, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>{loadDraft(e.id) ? "Edit (unsaved changes)" : "Edit"}</button>}
++          </div>
++          {activePrompts(e.entryType).map((p) => (String(e[p.id] || "").trim() ? (
++            <div key={p.id} style={{ marginBottom: 14 }}>
++              <SectionLabel>{p.label}</SectionLabel>
++              <p style={{ fontSize: 15, color: C.body, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{e[p.id]}</p>
++            </div>
++          ) : null))}
++          {e.videoUrl && <div style={{ marginBottom: 14 }}><SectionLabel>Video</SectionLabel><a href={e.videoUrl} target="_blank" rel="noreferrer" style={{ color: C.blue, fontSize: 14, wordBreak: "break-all" }}>{e.videoUrl}</a></div>}
++          {(e.connectionTags || []).length > 0 && (
++            <div style={{ marginBottom: 14 }}><SectionLabel>Connections</SectionLabel>
++              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{e.connectionTags.map((id) => { const d = DOMAINS.find((x) => x.id === id); return d ? <Tag key={id} d={d} big /> : null; })}</div>
++            </div>
++          )}
++          {tagged.length > 0 && <div style={{ marginBottom: res ? 14 : 0 }}><SectionLabel>Themes</SectionLabel>{tagged.map((t) => <div key={t.id} style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>“{t.question}”</div>)}</div>}
++          {res && <div><SectionLabel>Inspired by</SectionLabel><div style={{ fontSize: 13, color: C.muted }}>{res.id} — {res.title}</div></div>}
++        </Card>
++
++        {!isMentor && <Challenge entry={e} themes={themes} config={config} mentorAssessments={mentorAssessments} />}
++        <JournalThread entry={e} user={user} onChange={put} />
++
++        {!isMentor && (
++          <div style={{ textAlign: "right" }}>
++            <button onClick={async () => {
++              if (!window.confirm("Delete this entry, with its mentor feedback? This can't be undone.")) return;
++              if (await deleteJournalEntry(e.id)) { clearDraft(e.id); onEntries((prev) => prev.filter((x) => x.id !== e.id)); setMode({ view: "list" }); }
++              else window.alert("Couldn't delete — the Sheet didn't answer. Nothing was removed.");
++            }} style={{ background: "none", border: "none", color: C.faint, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Delete entry</button>
++          </div>
++        )}
++      </div>
++    );
++  }
++
++  // ── list ──
++  const newDraft = !isMentor ? loadDraft("new") : null;
++  const shown = entries.filter((e) => !themeFilter || (e.themeIds || []).includes(themeFilter));
++  const fchip = (on) => ({ padding: "4px 10px", borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: on ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.02)", border: `1px solid ${on ? "rgba(224,120,48,0.3)" : "rgba(255,255,255,0.05)"}`, color: on ? C.amber : C.muted });
++  return (
++    <>
++      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
++        <div style={{ fontSize: 14, color: C.muted }}>{isMentor ? "Mark's reflections. Open one to mark how deep the thinking goes and to coach him on it." : "Capture your development — coaching, skiing, clinics, feedback, study."}</div>
++        {!isMentor && <Button tone={C.amber} onClick={() => setMode({ view: "edit", id: null })} style={{ padding: "7px 14px", whiteSpace: "nowrap", flexShrink: 0 }}>{newDraft ? "Continue draft" : "+ New Entry"}</Button>}
++      </div>
++
++      {!isMentor && journal.typeColumn === false && (
++        <Card style={{ borderLeft: `3px solid ${C.amber}`, padding: "10px 12px" }}>
++          <div style={{ fontSize: 13, color: C.amber, fontWeight: 700, marginBottom: 2 }}>Entry types are not being saved</div>
++          <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5 }}>The <b>Journal</b> tab of the Google Sheet has no <b>entryType</b> column, and the Apps Script only writes columns that exist — so the old app never stored a type either (every saved entry reloads as On-Hill Coaching). Fix: in the Sheet, type <b>entryType</b> into the first empty cell of row 1 on the Journal tab. No code or redeploy needed; then set the type on existing entries with Edit.</div>
++        </Card>
++      )}
++
++      {activeThemes.length > 0 && entries.length > 0 && (
++        <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
++          <button onClick={() => setThemeFilter(null)} style={fchip(!themeFilter)}>All</button>
++          {activeThemes.map((t) => <button key={t.id} title={t.question} onClick={() => setThemeFilter(t.id)} style={fchip(themeFilter === t.id)}>{t.question.length > 30 ? `${t.question.slice(0, 30)}…` : t.question}</button>)}
++        </div>
++      )}
++
++      {shown.length === 0 && (
++        <div style={{ textAlign: "center", padding: "50px 20px" }}>
++          <div style={{ fontSize: 40, marginBottom: 8, opacity: 0.4 }}>📓</div>
++          <div style={{ fontSize: 18, fontWeight: 600, color: C.muted }}>{!loaded ? "Loading the journal from the Sheet…" : entries.length ? "No reflections tagged with this theme" : "No reflections yet"}</div>
++          {loaded && !entries.length && <div style={{ fontSize: 14, color: C.faint, marginTop: 4 }}>{isMentor ? "Mark hasn't written any yet." : "After your next on-snow session, come here and reflect on what happened."}</div>}
++        </div>
++      )}
++
++      {shown.map((e) => {
++        const depth = topDepth(e), s = listSummary(e), n = (e.mentorComments || []).length;
++        const type = e.typeKnown ? ENTRY_TYPES[e.entryType] : null;
++        const needsMe = isMentor && !e.mentorPulse?.[user.key];
++        return (
++          <div key={e.id} role="button" tabIndex={0} onClick={() => setMode({ view: "entry", id: e.id })} onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setMode({ view: "entry", id: e.id }); } }} style={{ cursor: "pointer" }}>
++            <Card style={{ borderLeft: `3px solid ${depth ? depth.color : "rgba(255,255,255,0.06)"}` }}>
++              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
++                <div style={{ minWidth: 0 }}>
++                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>{type ? `${type.icon} ${type.label} · ` : ""}{meta(e)}</div>
++                  <div style={{ fontSize: 15, fontWeight: 600, color: C.body, lineHeight: 1.4, overflowWrap: "anywhere" }}>{s.title}</div>
++                  {s.more && <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.45, marginTop: 3, overflowWrap: "anywhere" }}>{s.moreLabel && <span style={{ color: C.dim }}>{s.moreLabel} </span>}{s.more}</div>}
++                </div>
++                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
++                  {depth && <span title={`${USERS[depth.who]?.name || depth.who}${depth.count > 1 ? ` (highest of ${depth.count})` : ""}`} style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: `${depth.color}15`, border: `1px solid ${depth.color}30`, color: depth.color }}>{depth.icon} {depth.label}</span>}
++                  {needsMe && <span style={{ fontSize: 10, fontWeight: 700, color: C.amber }}>Needs your read</span>}
++                </div>
++              </div>
++              <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
++                {(e.connectionTags || []).map((id) => { const d = DOMAINS.find((x) => x.id === id); return d ? <Tag key={id} d={d} /> : null; })}
++                {n > 0 && <span style={{ fontSize: 10, color: C.green }}>💬 {n}</span>}
++                {e.videoUrl && <span style={{ fontSize: 10, color: C.blue }}>🎥</span>}
++                {!isMentor && loadDraft(e.id) && <span style={{ fontSize: 10, color: C.amber }}>unsaved edit</span>}
++              </div>
++            </Card>
++          </div>
++        );
++      })}
++    </>
++  );
++}
++
++function Challenge({ entry, themes, config, mentorAssessments }) {
++  const [reply, setReply] = useState(() => loadChallenge(entry)?.text || "");
++  const [busy, setBusy] = useState(false);
++  const run = async () => {
++    setBusy(true);
++    let coachNotes = {}; try { coachNotes = config?._COACH_NOTES ? JSON.parse(config._COACH_NOTES) : {}; } catch { /* none */ }
++    const system = buildChallengeSystem(entry, { mentorAssessments, coachNotes, themes, users: USERS });
++    const labels = (entry.connectionTags || []).map((id) => DOMAINS.find((d) => d.id === id)?.label).filter(Boolean);
++    const text = await callClaude([{ role: "user", content: challengeUserMessage(entry, { typeLabel: ENTRY_TYPES[entry.entryType]?.label || "Journal entry", reflection: reflectionText(entry), connectionLabels: labels }) }], system, { max_tokens: 900 });
++    const failed = /^(Error:|Unable to reach|No response\.)/.test(text);
++    setReply(text); if (!failed) saveChallenge(entry, text);
++    setBusy(false);
++  };
++  return (
++    <Card style={{ borderLeft: `3px solid ${C.purple}` }}>
++      <Button tone={C.purple} disabled={busy} onClick={run} style={{ width: "100%", padding: "10px 16px" }}>{busy ? "Thinking…" : reply ? "🧠 Challenge me again" : "🧠 Challenge My Thinking"}</Button>
++      {reply && (
++        <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 8, background: "rgba(192,96,160,0.04)", border: "1px solid rgba(192,96,160,0.1)" }}>
++          <div style={{ fontSize: 14, color: C.body, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{reply}<SpeakButton text={reply} /></div>
++          <Hint style={{ marginTop: 6 }}>AI challenge — not a mentor's view, and not saved to the Sheet. Kept on this device until you edit the entry.</Hint>
++        </div>
++      )}
++    </Card>
++  );
++}
+diff --git a/src/tabs/JournalEntryForm.jsx b/src/tabs/JournalEntryForm.jsx
+new file mode 100644
+index 0000000..95cfef0
+--- /dev/null
++++ b/src/tabs/JournalEntryForm.jsx
+@@ -0,0 +1,118 @@
++// New / edit entry. The form owns a working copy; every change is written to localStorage, so a reload, a tab switch
++// or a failed save never costs Mark what he typed (the old form kept it in React state only). The draft is cleared on
++// a confirmed save or an explicit discard — nothing else.
++import React, { useEffect, useState } from "react";
++import { C, lbl } from "../theme.js";
++import { Card, Field, Input, Select, Textarea, Button, Hint } from "../components/index.jsx";
++import { ENTRY_TYPES, CONTEXTS, DOMAINS, activePrompts, contentHash, hasText, saveDraft, clearDraft } from "../lib/journal.js";
++import { RESOURCES } from "../lib/resources.js";
++
++const chip = (on, tone = C.amber) => ({ padding: "5px 10px", borderRadius: 5, fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", background: on ? `${tone}1a` : "rgba(255,255,255,0.02)", border: `1.5px solid ${on ? tone : "rgba(255,255,255,0.06)"}`, color: on ? tone : C.muted });
++
++/**
++ * @param initial     entry to edit (a saved one, a restored draft, or newEntry())
++ * @param saved       the saved version when editing, null for a new entry — drives hash-diff and the title
++ * @param restored    true when `initial` came from a draft
++ * @param onSave      async (entry) => true | "error text"
++ */
++export default function JournalEntryForm({ initial, saved, restored, themes, typeColumn, recipients, onSave, onBack, onDiscard }) {
++  const isNew = !saved;
++  const draftId = isNew ? "new" : saved.id;
++  const [e, setE] = useState(initial);
++  const [wasRestored] = useState(!!restored);   // the parent re-renders once autosave has written a draft; only the mount-time answer is true
++  const [busy, setBusy] = useState(false);
++  const [err, setErr] = useState("");
++  const upd = (f, v) => setE((p) => ({ ...p, [f]: v }));
++  const toggle = (f, id) => setE((p) => ({ ...p, [f]: (p[f] || []).includes(id) ? p[f].filter((x) => x !== id) : [...(p[f] || []), id] }));
++
++  const dirty = isNew ? hasText(e) || !!e.location || !!e.videoUrl : contentHash(e) !== contentHash(saved);
++  useEffect(() => { if (dirty) saveDraft(draftId, e); else clearDraft(draftId); }, [e, dirty, draftId]);
++
++  const prompts = activePrompts(e.entryType);
++  const hidden = ["whyThatApproach", "whatHappened", "whatIdDoDifferently"].filter((f) => !prompts.some((p) => p.id === f) && String(e[f] || "").trim());
++  const activeThemes = (themes || []).filter((t) => t.active !== false);
++
++  const save = async () => {
++    if (busy) return;
++    if (!hasText(e)) { setErr("Write something under at least one prompt first."); return; }
++    setBusy(true); setErr("");
++    const r = await onSave(e);
++    if (r !== true) { setErr(typeof r === "string" ? r : "Couldn't save to the Sheet. Your entry is kept on this device — try again."); setBusy(false); }
++  };
++
++  return (
++    <div>
++      <button onClick={onBack} style={{ background: "none", border: "none", color: C.muted, fontSize: 14, cursor: "pointer", padding: "0 0 10px", fontWeight: 600, fontFamily: "inherit" }}>← Back{dirty ? " (draft kept)" : ""}</button>
++      <Card>
++        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
++          <div style={{ fontSize: 17, fontWeight: 700, color: C.text }}>{isNew ? "New Entry" : "Edit Entry"}</div>
++          {(wasRestored || dirty) && (
++            <div style={{ fontSize: 12, color: C.dim }}>
++              {wasRestored ? "Restored from your unsaved draft · " : "Draft saved on this device · "}
++              <button onClick={() => { if (window.confirm(isNew ? "Discard this draft?" : "Discard your unsaved changes?")) { clearDraft(draftId); onDiscard(); } }} style={{ background: "none", border: "none", color: C.red, fontSize: 12, cursor: "pointer", padding: 0, fontFamily: "inherit" }}>Discard</button>
++            </div>
++          )}
++        </div>
++
++        <div role="radiogroup" aria-label="Entry type" style={{ display: "flex", gap: 4, marginBottom: typeColumn === false ? 6 : 14, flexWrap: "wrap" }}>
++          {Object.entries(ENTRY_TYPES).map(([key, t]) => (
++            <button key={key} role="radio" aria-checked={e.entryType === key} onClick={() => setE((p) => ({ ...p, entryType: key, typeKnown: true }))} style={{ ...chip(e.entryType === key), borderWidth: 1 }}>{t.icon} {t.label}</button>
++          ))}
++        </div>
++        {typeColumn === false && <Hint style={{ marginBottom: 14, color: C.amber }}>The Journal sheet has no <b>entryType</b> column yet, so the type won't survive a reload. See the note on the Journal list.</Hint>}
++
++        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, marginBottom: 4 }}>
++          <Field label="Date"><Input type="date" value={e.date} onChange={(ev) => upd("date", ev.target.value)} /></Field>
++          <Field label="Context"><Select value={e.context} onChange={(ev) => upd("context", ev.target.value)}>{!CONTEXTS.includes(e.context) && <option value={e.context}>{e.context || "—"}</option>}{CONTEXTS.map((c) => <option key={c} value={c}>{c}</option>)}</Select></Field>
++          <Field label="Location"><Input value={e.location} onChange={(ev) => upd("location", ev.target.value)} placeholder="e.g., Keystone — Run 6" /></Field>
++          <Field label="Conditions"><Input value={e.conditions} onChange={(ev) => upd("conditions", ev.target.value)} placeholder="e.g., firm groomed, flat light" /></Field>
++        </div>
++
++        {prompts.map((p, i) => (
++          <div key={p.id} style={{ marginBottom: 14 }}>
++            <label style={lbl}>{i + 1}. {p.label}</label>
++            <Textarea value={e[p.id] || ""} onChange={(v) => upd(p.id, v)} placeholder={p.placeholder} />
++          </div>
++        ))}
++        {hidden.length > 0 && <Hint style={{ marginBottom: 14, color: C.amber }}>{ENTRY_TYPES[e.entryType].label} has {prompts.length} prompts. {hidden.length} answer{hidden.length > 1 ? "s" : ""} you wrote under another type {hidden.length > 1 ? "aren't" : "isn't"} shown and won't be saved — switch back to keep {hidden.length > 1 ? "them" : "it"}.</Hint>}
++
++        <Field label="Video link (optional)"><Input value={e.videoUrl || ""} onChange={(ev) => upd("videoUrl", ev.target.value)} placeholder="YouTube or Google Drive link" /></Field>
++
++        <div style={{ margin: "14px 0" }}>
++          <label style={lbl}>What domains did you connect? (select all that apply)</label>
++          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
++            {DOMAINS.map((d) => { const on = (e.connectionTags || []).includes(d.id); return <button key={d.id} aria-pressed={on} onClick={() => toggle("connectionTags", d.id)} style={chip(on, d.color)}>{d.label}</button>; })}
++          </div>
++        </div>
++
++        {activeThemes.length > 0 && (
++          <div style={{ marginBottom: 14 }}>
++            <label style={lbl}>Which themes does this push on?</label>
++            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
++              {activeThemes.map((t) => {
++                const on = (e.themeIds || []).includes(t.id);
++                return (
++                  <label key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "6px 8px", borderRadius: 6, cursor: "pointer", background: on ? "rgba(224,120,48,0.06)" : "rgba(255,255,255,0.015)", border: `1px solid ${on ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.04)"}` }}>
++                    <input type="checkbox" checked={on} onChange={() => toggle("themeIds", t.id)} style={{ marginTop: 2, accentColor: C.orange }} />
++                    <span style={{ fontSize: 13, color: on ? C.body : C.muted, lineHeight: 1.4 }}>{t.question}</span>
++                  </label>
++                );
++              })}
++            </div>
++          </div>
++        )}
++
++        <Field label="Inspired by a resource? (optional)">
++          <Select value={e.resourceId || ""} onChange={(ev) => upd("resourceId", ev.target.value)}>
++            <option value="">— None —</option>
++            {Object.entries(RESOURCES).map(([cat, r]) => <optgroup key={cat} label={cat}>{r.items.map((it) => <option key={it.id} value={it.id}>{it.id} — {it.title}</option>)}</optgroup>)}
++          </Select>
++        </Field>
++
++        {err && <div style={{ fontSize: 13, color: C.red, margin: "10px 0 0" }}>{err}</div>}
++        <Button solid tone={C.orange} disabled={busy} onClick={save} style={{ width: "100%", padding: 12, fontSize: 15, marginTop: 12 }}>{busy ? "Saving…" : !isNew && !dirty ? "No changes — close" : "Save Reflection"}</Button>
++        {isNew && <Hint style={{ marginTop: 6, textAlign: "center" }}>{recipients.length ? `Saving emails ${recipients.map((r) => `${r.key} (${r.email})`).join(", ")}.` : "No mentor has an email in their profile — nobody will be notified."}</Hint>}
++      </Card>
++    </div>
++  );
++}
+diff --git a/src/tabs/JournalThread.jsx b/src/tabs/JournalThread.jsx
+new file mode 100644
+index 0000000..78daf5a
+--- /dev/null
++++ b/src/tabs/JournalThread.jsx
+@@ -0,0 +1,113 @@
++// Mentor feedback on one journal entry: depth assessment (set / change / tap again to clear) and the comment thread.
++// Each action re-reads the live row and writes its own column only (src/api.js) — the entry handed back to the parent
++// carries the MERGED pulse and thread, so what is on screen is what is in the Sheet.
++import React, { useState } from "react";
++import { C, txta } from "../theme.js";
++import { Card, SectionLabel, MicButton } from "../components/index.jsx";
++import { USERS } from "../lib/users.js";
++import { PULSE_OPTIONS } from "../lib/journal.js";
++import { setJournalPulse, appendJournalComment } from "../api.js";
++import { shortDate } from "./Rationale.jsx";
++
++const WHY = { unreachable: "Couldn't reach the Sheet — nothing was changed. Try again.", gone: "This entry is no longer in the Sheet (deleted elsewhere?). Go back and reload.", write: "The Sheet didn't accept the change. Try again." };
++
++const Avatar = ({ who, size = 20 }) => (
++  <div style={{ width: size, height: size, borderRadius: "50%", flexShrink: 0, background: `${who.color}20`, border: `1.5px solid ${who.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.45, fontWeight: 800, color: who.color }}>{who.name[0]}</div>
++);
++
++export default function JournalThread({ entry, user, onChange }) {
++  const isMentor = user.role === "mentor";
++  const [busyPulse, setBusyPulse] = useState("");
++  const [err, setErr] = useState("");
++  const mine = entry.mentorPulse?.[user.key] || "";
++  const others = Object.entries(entry.mentorPulse || {}).filter(([k]) => !isMentor || k !== user.key);
++
++  const tap = async (pulseId) => {
++    if (busyPulse) return;
++    setBusyPulse(pulseId); setErr("");
++    const r = await setJournalPulse(entry.id, user.key, mine === pulseId ? null : pulseId);
++    if (r.ok) onChange({ ...entry, mentorPulse: r.mentorPulse, mentorComments: r.mentorComments });
++    else setErr(WHY[r.reason] || WHY.write);
++    setBusyPulse("");
++  };
++
++  return (
++    <Card>
++      <SectionLabel>Mentor Feedback</SectionLabel>
++
++      {others.map(([k, pulseId]) => {
++        const who = USERS[k], pulse = PULSE_OPTIONS.find((p) => p.id === pulseId);
++        if (!who || !pulse) return null;
++        return (
++          <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, padding: "6px 8px", borderRadius: 5, background: `${pulse.color}08`, flexWrap: "wrap" }}>
++            <Avatar who={who} />
++            <span style={{ fontSize: 12, fontWeight: 700, color: who.color }}>{who.name}</span>
++            <span style={{ fontSize: 14, fontWeight: 700, color: pulse.color }}>{pulse.icon} {pulse.label}</span>
++            <span style={{ fontSize: 11, color: C.dim }}>{pulse.desc}</span>
++          </div>
++        );
++      })}
++      {!isMentor && others.length === 0 && (entry.mentorComments || []).length === 0 && <div style={{ fontSize: 13, color: C.faint, marginBottom: 8 }}>No mentor has read this one yet.</div>}
++
++      {isMentor && (
++        <div style={{ marginBottom: 10 }}>
++          <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, marginBottom: 4 }}>How deep is Mark's thinking here?{mine ? " — tap your choice again to clear it" : ""}</div>
++          <div style={{ display: "flex", gap: 6 }}>
++            {PULSE_OPTIONS.map((p) => {
++              const on = mine === p.id, busy = busyPulse === p.id;
++              return (
++                <button key={p.id} onClick={() => tap(p.id)} disabled={!!busyPulse} aria-pressed={on} title={p.desc} style={{ flex: 1, padding: "8px 6px", borderRadius: 6, fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: busyPulse ? "default" : "pointer", background: on ? `${p.color}20` : `${p.color}08`, border: `1.5px solid ${on ? p.color : p.color + "30"}`, color: p.color, opacity: busyPulse && !busy ? 0.5 : 1 }}>
++                  {busy ? "Saving…" : `${p.icon} ${p.label}`}
++                </button>
++              );
++            })}
++          </div>
++          {mine && <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>{PULSE_OPTIONS.find((p) => p.id === mine)?.desc}</div>}
++        </div>
++      )}
++      {err && <div style={{ fontSize: 12, color: C.red, marginBottom: 8 }}>{err}</div>}
++
++      <Comments entry={entry} user={user} onChange={onChange} />
++    </Card>
++  );
++}
++
++function Comments({ entry, user, onChange }) {
++  const draftKey = `rmat_jc_${user.key}_${entry.id}`;
++  const [text, setText] = useState(() => { try { return window.localStorage.getItem(draftKey) || ""; } catch { return ""; } });
++  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
++  const setDraft = (v) => { setText(v); try { v ? window.localStorage.setItem(draftKey, v) : window.localStorage.removeItem(draftKey); } catch { /* ignore */ } };
++  const post = async () => {
++    const t = text.trim(); if (!t || busy) return;
++    setBusy(true); setErr("");
++    const r = await appendJournalComment(entry.id, { userId: user.key, text: t, timestamp: new Date().toISOString() });
++    if (r.ok) { onChange({ ...entry, mentorComments: r.mentorComments, mentorPulse: r.mentorPulse }); setDraft(""); }
++    else setErr(r.reason === "gone" ? WHY.gone : "Couldn't post — your comment is still in the box. Try again.");
++    setBusy(false);
++  };
++  return (
++    <>
++      {(entry.mentorComments || []).map((c, i) => {
++        const who = USERS[c.userId] || { name: String(c.userId || "?"), color: C.muted };
++        return (
++          <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, padding: "8px 10px", borderRadius: 6, background: `${who.color}06`, border: `1px solid ${who.color}12` }}>
++            <Avatar who={who} size={22} />
++            <div style={{ flex: 1, minWidth: 0 }}>
++              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
++                <span style={{ fontSize: 12, fontWeight: 700, color: who.color }}>{who.name}</span>
++                <span style={{ fontSize: 10, color: C.dim }}>{shortDate(c.timestamp)}</span>
++              </div>
++              <div style={{ fontSize: 14, color: C.body, lineHeight: 1.5, whiteSpace: "pre-wrap", marginTop: 2, overflowWrap: "anywhere" }}>{c.text}</div>
++            </div>
++          </div>
++        );
++      })}
++      <div style={{ display: "flex", gap: 6, alignItems: "flex-end", marginTop: 6 }}>
++        <textarea value={text} onChange={(e) => setDraft(e.target.value)} placeholder={user.role === "mentor" ? "Coach Mark on this reflection…" : "Respond to mentor feedback…"} style={{ ...txta, minHeight: 36, flex: 1, fontSize: 13 }} />
++        <MicButton onResult={(t) => setDraft(text ? `${text} ${t}` : t)} />
++        <button onClick={post} disabled={busy || !text.trim()} style={{ padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700, fontFamily: "inherit", background: `${user.color}12`, border: `1px solid ${user.color}30`, color: user.color, cursor: busy ? "default" : "pointer", flexShrink: 0, opacity: busy || !text.trim() ? 0.5 : 1 }}>{busy ? "Posting…" : "Post"}</button>
++      </div>
++      {err && <div style={{ fontSize: 12, color: C.red, marginTop: 4 }}>{err}</div>}
++    </>
++  );
++}

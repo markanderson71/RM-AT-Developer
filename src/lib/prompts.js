@@ -289,3 +289,43 @@ export function buildScoreInput(exam, { pastSessions = [], parseSummary }) {
   }
   return `SCORE ONLY WHAT THE EXAMINER HEARD:\n\nPEER DIALOG (examiner observed):\n${dialogText}\n\nPRESCRIPTION DELIVERY TO PEER (examiner observed):\n${prescribeText}\n\nMARK'S PRESENTATION TO EXAMINER:\n${exam.presentation}\n\nEXAMINER Q&A:\n${debriefText}${revisionContext}${pastContext}\n\nContext: ${exam.who}, ${exam.activity}, ${exam.conditions}\n\nScore ONLY what the examiner heard. Do NOT consider any private notes. Evaluate: (1) Did he connect the task to the subject's intent when delivering it? (2) Did he explain the technical WHY to the examiner?\n\nRESPOND ONLY IN JSON (no markdown, no backticks). CHECK FROM THE TOP DOWN starting at 5: Does candidate extend beyond expected with autonomous skill? If yes, 5. Then check 4: appears regularly at AT standard? If yes, 4. If something missing, verify 4-level gap not 5-level. Only 3 if genuine 4-level element absent.\n${SCORE_JSON_SHAPE}`;
 }
+
+// ── Journal: Challenge Me (session 7) ────────────────────────────────────────────────────────────
+// Replaces the old app's use of the whole eight-layer sparring prompt (reference text, four MA transcripts with the old
+// scorer's numbers, videos, clinics, checkpoints) for a one-shot reply to one reflection. This prompt reads no scores
+// (§15: nothing but scorecard() reads them) and is told what KIND of entry it is looking at — the old one challenged a
+// clinic note as if it were an MA.
+const CHALLENGE_BY_TYPE = {
+  coaching: "This is a reflection on coaching or analyzing a skier. Test the analysis: is the root cause a cause or another symptom; where in the turn, which ski, which joint; does each link say HOW one thing produced the next, through to what the ski did and what that did to the outcome the skier wanted; was the intent verified before the diagnosis; does the teaching decision follow from the cause he named.",
+  personal: "This is about his own skiing. Test the gap between what he felt and what the ski actually did: how does he know; what would someone watching have seen; which fundamental was he changing and what did it do to the others; what on the snow told him it worked. An Alpine Trainer has to demonstrate on command — push toward what he can reproduce, not what felt good once.",
+  clinic: "This is a clinic he attended. Do not re-teach the clinic. Test whether the takeaways are his own understanding or the clinician's phrases: can he explain the mechanism behind a drill he liked; whom would he NOT use it with; how does it change what he does with an instructor he is training.",
+  feedback: "This is feedback someone gave him. Do not judge the feedback. Test what he did with it: did he record what was said or what he wanted to hear; what evidence in his own work confirms or contradicts it; is the action he chose aimed at the cause of the pattern or at its symptom.",
+  study: "This is something he read or watched. Test transfer: can he state the idea in his own words with a skiing example the source did not use; where does it break down; what would he see in a skier, on snow, that this idea explains better than what he believed before.",
+  general: "This is a free-form note. Find the claim inside it and test that. If there is no claim, ask for one.",
+};
+
+/**
+ * @param {{entryType:string}} entry
+ * @param {object} ctx  mentorAssessments (Config._MENTOR_ASSESSMENTS), coachNotes (Config._COACH_NOTES), themes, users
+ */
+export function buildChallengeSystem(entry, { mentorAssessments, coachNotes, themes = [], users } = {}) {
+  const tagged = themes.filter((t) => (entry.themeIds || []).includes(t.id));
+  const notes = Object.entries(coachNotes || {}).filter(([, v]) => typeof v === "string" && v.trim());
+  const thread = (entry.mentorComments || []).filter((c) => users?.[c.userId]?.role === "mentor");
+  return `You are challenging one journal reflection written by Mark, a PSIA Level 3 instructor working toward Alpine Trainer (AT). An AT trains instructors. His assessor, Chris, describes AT-level thinking as: X led to Y which led to Z, tied to the task and to what the skier intended, with "the how" stated at each link — and equipment, biomechanics and the desired performance treated as one connected picture. Level 3 thinking is accurate and links two things; AT thinking sees the whole, names what drives it, and can say how.
+
+${CHALLENGE_BY_TYPE[entry.entryType] || CHALLENGE_BY_TYPE.general}
+
+HOW TO RESPOND
+- Read what he actually wrote. Never ask for something the reflection already contains; never challenge a claim he did not make.
+- At most three challenges, the most important first. Each one: quote or name the exact sentence you are pushing on, say what is missing or unproven in it, then ask ONE question he could answer in the journal or on snow. No lists of questions.
+- If a connection he tagged is not visible in the text, say which one. If the text makes a connection he did not tag, say that instead — once.
+- If a link in his reasoning is sound, say so in one sentence. Do not praise the rest.
+- Do not supply the answer, do not rewrite his reflection, do not give a score or a level, and do not use the words Surface, Connecting or Integrated — judging depth is his mentors' call.
+- Plain text, under 220 words. No headings, no bullet symbols, no bold.${tagged.length ? `\n\nTHEMES HE SAYS THIS ENTRY PUSHES ON (hold him to them):\n${tagged.map((t) => `- ${t.question}`).join("\n")}` : ""}${mentorGapsBlock(mentorAssessments, users).replace("probe the consistent gaps first", "where a gap shows up in THIS reflection, challenge there first")}${notes.length ? `\n\nCOACHING NOTES FROM HIS MENTORS (how they want him pushed):\n${notes.map(([k, v]) => `${users?.[k]?.name || k}: ${v.trim().slice(0, 600)}`).join("\n")}` : ""}${thread.length ? `\n\nHIS MENTORS HAVE ALREADY SAID THIS ABOUT THIS ENTRY — do not repeat it; go where they have not:\n${thread.map((c) => `${users?.[c.userId]?.name || c.userId}: ${c.text.trim().slice(0, 400)}`).join("\n")}` : ""}`;
+}
+
+export function challengeUserMessage(entry, { typeLabel, reflection, connectionLabels = [] }) {
+  const where = [entry.date, entry.context, entry.location, entry.conditions].filter(Boolean).join(" · ");
+  return `${typeLabel}${where ? ` — ${where}` : ""}\n\n${reflection}\n\nConnections I tagged: ${connectionLabels.length ? connectionLabels.join(", ") : "none"}.\n\nChallenge my thinking.`;
+}

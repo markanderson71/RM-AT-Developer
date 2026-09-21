@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
 import { C, font, GLOBAL_CSS } from "./theme.js";
 import { ATIcon, Card } from "./components/index.jsx";
 import { USERS } from "./lib/users.js";
-import { loadConfig, loadMaSessions, sheetHealth } from "./api.js";
+import { loadConfig, loadMaSessions, loadJournal, sheetHealth } from "./api.js";
 import Sparring from "./tabs/Sparring.jsx";
 import MAHistory from "./tabs/MAHistory.jsx";
+import Journal from "./tabs/Journal.jsx";
 import { sealSessions } from "./lib/scorecard.js";
 import referenceText from "../reference/psia.md?raw";
 
@@ -12,6 +13,7 @@ const OLD_APP = "https://at-dev-tracker.vercel.app";
 
 // Tabs land here one session at a time (§13). Until then, the link to the old app covers the rest.
 const TABS = [
+  { id: "journal", label: "Journal", roles: ["candidate", "mentor"] },
   { id: "sparring", label: "Sparring Partner", roles: ["candidate"] },
   { id: "mahistory", label: "MA History", roles: ["candidate", "mentor"] },
 ];
@@ -43,7 +45,7 @@ export default function App() {
   const [user, setUser] = useState(null);         // { key, ...USERS[key] }
   const [pending, setPending] = useState(null);   // key awaiting PIN
   const [tab, setTab] = useState("sparring");
-  const [data, setData] = useState({ loaded: false, error: false, maSessions: [], config: {} });
+  const [data, setData] = useState({ loaded: false, error: false, maSessions: [], config: {}, journal: { entries: [], typeColumn: null } });
 
   // Background load. The exam never waits on the Sheet: history and mentor notes only feed the examiner's probes.
   const [loadTick, setLoadTick] = useState(0);
@@ -52,10 +54,10 @@ export default function App() {
     let alive = true;
     setData((d) => ({ ...d, loaded: false, error: false }));
     (async () => {
-      const [maSessions, config] = await Promise.all([loadMaSessions(), loadConfig()]);
+      const [maSessions, config, journal] = await Promise.all([loadMaSessions(), loadConfig(), loadJournal()]);
       if (!alive) return;
       // Blind scoring (§9): for a mentor, AI summaries of sessions he hasn't scored never enter React state.
-      setData({ loaded: true, error: sheetHealth.failed.has("MASessions") || sheetHealth.failed.has("Config"), maSessions: sealSessions(maSessions, user), config });
+      setData({ loaded: true, error: ["MASessions", "Config", "Journal"].some((t) => sheetHealth.failed.has(t)), maSessions: sealSessions(maSessions, user), config, journal });
     })();
     return () => { alive = false; };
   }, [user, loadTick]);
@@ -102,7 +104,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
             {visibleTabs.map((t) => (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}{t.id === "mahistory" && data.maSessions.length ? ` (${data.maSessions.length})` : ""}</button>
+              <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)", background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)", color: tab === t.id ? C.amber : C.muted }}>{t.label}{t.id === "mahistory" && data.maSessions.length ? ` (${data.maSessions.length})` : ""}{t.id === "journal" && data.journal.entries.length ? ` (${data.journal.entries.length})` : ""}</button>
             ))}
             <a href={OLD_APP} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12, color: C.dim, textDecoration: "none" }}>Everything else is on the old app ↗</a>
           </div>
@@ -119,6 +121,8 @@ export default function App() {
       <div className="at-container" style={{ padding: "16px 16px 60px" }}>
         {(
           <>
+            {tab === "journal" && <Journal user={user} journal={data.journal} loaded={data.loaded} config={data.config} mentorAssessments={mentorAssessments}
+              onEntries={(fn) => setData((d) => ({ ...d, journal: { ...d.journal, entries: fn(d.journal.entries) } }))} />}
             {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} referenceText={referenceText}
               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}
             {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}

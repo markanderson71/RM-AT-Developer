@@ -1,0 +1,352 @@
+From 090d99b5599c0002a20a0812f9e5aa6dc7418bb9 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 20 Sep 2026 03:24:42 +0000
+Subject: [PATCH] Session 6c: exemplar bounds (v2-rag-4), evidence guards in
+ code, score --reuse, unknown-flag guards, doc
+
+---
+ AT_Scoring_Architecture.md  |  8 ++++++-
+ lib/assembler.js            |  2 +-
+ lib/coaching.js             | 28 ++++++++++++++++++++++++
+ lib/extractStats.js         |  2 +-
+ lib/prompts/evaluate.js     | 10 ++++++---
+ lib/prompts/extract.js      | 43 +++++++++++++++++++++++++++++++------
+ scripts/ingest-scores.mjs   |  4 ++++
+ scripts/score.mjs           | 20 +++++++++++++++--
+ scripts/selftest-ingest.mjs |  2 +-
+ scripts/selftest-score.mjs  | 22 +++++++++++++++++++
+ 10 files changed, 125 insertions(+), 16 deletions(-)
+
+diff --git a/AT_Scoring_Architecture.md b/AT_Scoring_Architecture.md
+index 85bed66..ac3baa1 100644
+--- a/AT_Scoring_Architecture.md
++++ b/AT_Scoring_Architecture.md
+@@ -1,6 +1,6 @@
+ # AT Development Journal — Scoring System Architecture
+ 
+-**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6 built and offline-verified, **live steps pending (ingest the two scorecards, rescore with exemplars, third scorecard when Chris is back)** (37 Chris statements from the 9/18 call still pending his approval); next is 7
++**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6: exemplars live and cited (6a: 6/12 exact · 12/12 within one); 6b failed on the blind session (Evaluate +2), 6c (`v2-rag-4` + evidence guards) built, **live check pending; third scorecard when Chris is back** (37 Chris statements from the 9/18 call still pending his approval); next is 7
+ **Owner:** Mark Anderson
+ **Ground truth:** Chris (AT Assessor)
+ **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
+@@ -491,6 +491,8 @@ Recorded so they aren't re-argued.
+ | The AI score a scorecard is compared with is pinned once (`ai_at_submit`, else at first ingest) | A rescore — including one made better *by that very scorecard* — must not rewrite history, or agreement drifts toward 100% by construction. |
+ | Agreement headline and §1 targets count blind scorecards only | A card given after seeing the AI number is anchored; a card the scorer was calibrated on is not a test. Both are reported, neither counts. |
+ | Knowledge ingestion is triggered by the app but reads from the Sheet | The Sheet row is the record. A client can ask for a session to be ingested; it cannot post a scorecard or a comment into the store that the thread doesn't hold. Failure never blocks the Sheet write; the CLI catches up. |
++| An exemplar bounds a score; it never sets it | `v2-rag-3` told the evaluator to start from Chris's number and move for named differences; against a single all-2s exemplar it added levels ("two levels above: 4"). Weaker/equal ⇒ ≤ N, stronger ⇒ ≥ N, and the rung is earned on the scale. Decided 2026-09-19. |
++| Template changes are A/B-tested on a fixed extraction (`--reuse`) | Extraction is not repeatable (7uk7lnh: 9 → 10 connections, Evaluate 3 → 4 across runs); a fresh one confounds the comparison. |
+ | One complete instance alone = 3 at most; 4 = recurs, or (single-occurrence lines) complete and threaded | Two over-scores on 7uk7lnh came from "complete: 1 · partial: 0" having no rung. Applied with exemplars, tested on both scorecards, not tuned line by line. Decided 2026-09-19. |
+ | Backend/frontend sessions alternate | Each session is one kind of work; review is easier; the scoring loop is live by session 6 without waiting for all tabs. |
+ 
+@@ -498,6 +500,7 @@ Recorded so they aren't re-argued.
+ 
+ *(append one line per build session: date · session # · built · decided · deferred)*
+ 
++- **2026-09-19 · Session 6 — live runs, 6b failed on the blind session, 6c** · Ingest: both exemplars live (first run was accidental — `--dry.` with a trailing period was silently ignored; CLIs now reject unknown flags). **6a, exemplars alone (`v2-rag-2`):** 7uk7lnh 3/3/3 · 2/3/4 vs Chris 2/2/3 · 2/3/3 — exact 3/6, within-one 6/6 (saved blind score was 5/6; Evaluate 4 → 3); 7n6ry6d 2/1/3 · 1/2/1 vs 2/2/2 · 2/2/1 — exact 3/6, within-one 6/6. Total 6/12 · 12/12 (before exemplars 5/12 · 11/12). Each rescore was shown the other session's exemplar and cited it — the "a rescore cites one" half of done-when is met. **6b (extract v4 / `v2-rag-3`):** 7n6ry6d 2/2/3 · 1/2/1 — exact 4/6, within-one 6/6, Evaluate 1 → 2 through `vs_intent: partial` (the three-state comparison doing its job). **7uk7lnh 3/4/3 · 3/3/4 — exact 2/6, within-one 5/6, Evaluate +2: FAIL.** Diagnosis from the extraction and `exemplar_anchor`: (1) the anchor instruction ("start from Chris's number, move for a named difference") became an adder — with one exemplar, the all-2s session, every line was "stronger than a 2" and the evaluator wrote "Warrants two levels above: 4", "three levels above: 4"; (2) the v4 clerk said yes to every new field: `states_effect_on_observed_performance: true` on a quote whose every equipment sentence is should / might allow / will help (Chris, 9/18: "a recommendation"), and `vs_intent.reference_quote` was the peer's sentence, not Mark's; (3) each run re-extracted, so the A/B was confounded. · **6c built:** `evidenceGuards` in code (replaces `speakerGuard`): evidence whose quote exists only in private notes is cleared (in notes *and* spoken = spoken); an equipment quote whose every equipment sentence is modal/future is not an effect on observed performance; a `vs_intent` reference that is someone else's words is flagged, state left alone; runs before `comparisonFacts` so a cleared reference demotes "made". `whoSaid()` in `lib/coaching.js`. **`v2-rag-4`: an exemplar BOUNDS a score (weaker/equal ⇒ ≤ N, stronger ⇒ ≥ N); the rung above is earned on the scale, never "N plus the differences"**; cite an exemplar only where it bounded. `score.mjs --reuse` re-evaluates the saved extraction (current guards re-applied) so a template change is tested on fixed evidence. Offline tests use the real 7uk7lnh quotes. · **Open — Evaluate on 7uk7lnh is not fixable from presence alone.** Mark did make both comparisons, unprompted, in outcome terms; Chris gave 2. What separates his 2 from a 4 is in his own pending statement (42:23: "go to the component parts… always in relationships between fundamentals, phase to phase") — the *depth* of the comparison, not its existence. That is Chris's content and arrives by retrieval when he approves it; it is not going into the template. Expect Evaluate +1 on this session until then. · Live check of 6c pending.
+ - **2026-09-19 · Session 6 (backend — the feedback loop)** · Built, as two commits so each can be measured on its own. **6a (exemplars alone, scorer unchanged `v2-rag-2`):** `lib/mentorScores.js` (the one scorecard reader, moved out of `src/lib/scorecard.js`, which re-exports it; `vocab.MENTORS`); `lib/ingest/score.js` + `api/ingest/score.js` (scorecard read from the Sheet → per-line exemplar ≤1.8K tok embedded on the extraction text + note chunks; AI score pinned once; idempotent; replaces by supersession; Chris's supersedes `past_session`); `lib/ingest/comment.js` + `api/ingest/comment.js` (verbatim single-point split, seen-by-timestamp guard); `lib/agreement.js` + `api/agreement.js`; `store.js` += `embed_text`, ids returned from `insertChunks`, `liveBySourceRef`, `commentTimestamps`, `listExemplars`; assembler: exemplar slot `author = chris`, exemplars excluded from the Chris slot in the query, anchoring header, `manifest.exemplar_sessions`; `src/api.js` `appendFeedback` → fire-and-forget ingest with one retry; `scripts/ingest-scores.mjs`, `score.mjs --compare chris`; `Rationale.jsx` draws a cited exemplar as "Compared with a session Chris scored…", never inside quotation marks (it is his number, not his words), and the coaching panel no longer picks one as its Chris quote. **6b (extract v4 / `v2-rag-3`):** two three-state comparisons replace `comparison_to_intended_outcome.made` (v3 fields still written; stored v3 lifted on read); `equipment.states_effect_on_observed_performance`; `delivery_to_peer` Mark-only + `speakerGuard` in code; scale: one complete instance alone = 3 at most; `exemplar_anchor`; `gap_to_next` quotes Mark only; `unitCheck` / `mergePassage` follow (a rewrite that adds the ideal no longer erases a comparison to intent made elsewhere); template 2,989 tok of 3,000 — wording trimmed, no standing rule removed. · Verified offline: `npm run test:ingest` (exemplar text; three fit the slot even from an oversized extraction; re-run writes nothing and makes no model call; the pinned AI score survives rescore + re-ingest; Gates's card supersedes nothing; comment split is verbatim and idempotent; **agreement reproduces §16: blind 3/6 exact · 5/6 within one · Evaluate +2; all 5/12 (41.7%) · 11/12 (91.7%)**; scoring 7uk7lnh is shown 7n6ry6d's exemplar and not its own or Gates's); `test:score` (v4 facts, speaker guard on the 7uk7lnh peer-restatement case, exemplar bookkeeping); `test:history`, `test:exam`, `test:zoom`; `vite build` clean. · **Not verified here (no keys): every live step.** Done-when is open on all three counts until Mark runs it: (1) `npm run ingest:scores` → two exemplars in the store; (2) `npm run score -- 7uk7lnh --compare chris` and `-- 7n6ry6d --compare chris` → each shows the other's exemplar, cites it, within-one on all six; (3) **the third blind scorecard does not exist yet** — it arrives when Chris scores a fresh exam in the app (the same event that closes session 5), and the submit hook ingests it. · Decided: six new §15 rows. · Flag: with n = 2 and self-exclusion, each rescore sees exactly one exemplar, and 7n6ry6d's scorecard is the one `v2-rag-2`'s AT-bar paragraph was written from — agreement on these two after 6b is a regression check, not evidence; the first evidence is the third session, scored blind by `v2-rag-3` before Chris sees it. · Deferred: see §17.
+ - **2026-09-19 · Session 5 — live check, left open** · Deployed. Coaching panel made collapsible like the other sections (choice remembered). Try-that-line-again on `ma_7uk7lnh`: 139 s first try (≈90 s of it rebuilding the shed extraction, once per session per browser), **50 s steady state** — the under-a-minute half of done-when is met, with ~10 s of margin; not tuned on two data points (lever in §17). Chris's 9/18 verbal scorecard posted on 7uk7lnh in the parsed format (`scored blind`); the tab shows exact 3/6 · within-one 5/6 · same result, Evaluate AI +2 — matches the 9/18 log. · **Open: Chris scores one session blind in the new app** (he is away ~1 week). Decided with Mark: move on to session 6 and close this item when Chris is back; preferably on a fresh exam scored by `v2-rag-2`, which also gives session 6 its third scorecard. Do not rescore 7uk7lnh — it is the only session scored before Chris saw anything.
+ - **2026-09-19 · Session 5 (frontend — MA History + coaching)** · Mark: happy with the MA History layout; the problem is that scores have not been consistent across the application. Diagnosis (old JSX): `summary` read in eight places — exam screen ranks attempts by sum of the legacy six, MA History shows top-level scores, Progress trends `if (scores[k])` (drops 0/missing, so averages run over different lines per session), prompts read legacy keys by name, and three different fallbacks when the JSON doesn't parse; session 3's `sectionAverages` repeated it (a legacy attempt got "TU 4.00" from one line). · Built: `src/lib/scorecard.js` — `scorecard(session,{viewer})` is the only reader: form (`2026` | `legacy`), six lines with null for missing, section averages and verdict computed from the lines (stored values ignored, mismatch → `warnings`), best-attempt rank (MA avg + TU avg; legacy never outranks 2026), mentor scorecards (structured blind items and hand-posted "… scorecard …" lines, attributed to the mentor named), per-line deltas, and the blind seal; `exam.js`, `ATExam.jsx` score screen and the legacy prompt history now go through it (no score arithmetic left elsewhere). `components/ScoreViews.jsx` (chips/grid/verdict/old-scorer tag — same view in the exam and in history). `tabs/MAHistory.jsx` (old layout; newest session open, others collapse; structured sections rendered in full with speaker colors — fixes Chris's "I only got one sentence" of peer delivery; rescore through extract → evaluate with step line, previous score kept in `score_history`, **no legacy fallback on rescore** — a failure leaves the existing score alone; draft-persisting comment box with mic; delete and rescore are candidate-only). `tabs/Rationale.jsx` (§12.2: Chris quoted inline with date, ingest-written title shown outside the quotation marks; PSIA/form citations and the level-by-level ladder collapsed). `tabs/BlindScoreForm.jsx` (§12.1: six tap rows on the 2026 form, live section averages, note, draft in localStorage, confirm, final on submit). Blind: `sealSessions()` takes the AI summary out of the session object before it reaches React state for any session the mentor hasn't scored; a sealed card carries no numbers or text; other mentors' scorecards are withheld from the thread until he submits his own; on submit the item stores `scores`, `note`, `ai_at_submit` and a text line in the same format Mark posted by hand for 7n6ry6d. **Coaching:** `lib/coaching.js` + `tabs/CoachingPanel.jsx` — per line, lowest first: what Mark said (located in the transcript, typo-tolerant), the evaluator's rewrite, the because-clause, the first Chris citation; labelled AI SUGGESTIONS; says so when the quoted line was the *peer's* (7uk7lnh Prescription), came only under examiner probing (7uk7lnh Desired Performances), or was in private notes and never spoken. **Try that line again:** `extractPassage` (same clerk, same schema, peer intent + task as reference) → `mergePassage` (items quoted from the replaced sentence out, passage items in, stats recomputed) → `assemble(original, {evidence: merged})` → `buildEvaluateLineUser` (one line, full ladder, not told the previous score) → `normalizeLine` (same clamps, citation check, equipment guard) + `unitCheck` (the evaluator's unit, checked in code against the passage alone, with the missing links named). Practice log in localStorage, last 5 per line. **Pre-exam brief** on the setup screen: three lowest lines of the last 2026-form session, ranked by Chris's scorecard when he has one. `parseAIJson` strategy 2 now rebuilds rationale for `desired_performances` and `equipment`. Summary fit: cited text 400 (Chris) / 200 (others); shed order is now justifications → extraction → citation_details, because coaching needs the extraction (7uk7lnh's was shed). `src/api.js` += `saveMaSummary`, `appendFeedback` (re-read + merge), `deleteMaSession`, `scoreLineTry`. · Verified: `npm run test:history -- <export>` (offline; also runs every row of the live MASessions export through `scorecard()`: 13 sessions → 1 on the 2026 form, 10 old-scorer, 2 unscored, 0 unparsed, 0 warnings; reproduces the 9/18 comparison exactly — exact 3/6, within-one 5/6, Evaluate +2, same result); `scripts/rendertest-history.jsx` server-renders the tab from the live export as Mark, as Chris before scoring (no AI output in any sealed session), and as Chris after submitting (reveal, per-line delta, coaching read-only); `scoreLine` run end to end with models and store mocked (query = original extraction, evidence = merged, nothing written); `vite build` clean; score/exam/zoom selftests pass. · **Not verified here (no keys, no deploy): the two model calls of try-again and its wall-clock; the blind submit against the live Sheet.** Done-when stays open until deployed: Chris scores one session blind; Mark reworks one line in under a minute. · Deferred: see §17.
+@@ -571,4 +574,7 @@ Recorded so they aren't re-argued.
+ - **Agreement endpoint returns AI numbers and has no auth** — same trust model as the rest, same fix as the blind-seal item above; session 8 must not call it for a sealed viewer.
+ - **Blind-form notes are one field.** §6.4 imagined a note per criterion; the form has one. Notes are split by paragraph and keyword-tagged to lines. If Chris's notes turn out to be line-specific, six optional note fields on the form are the cleaner source (session 8 touch).
+ - **Comment `type` is a regex** (`correction` if the text reads as disagreement, else `principle`) — harvested from bootstrap, unchanged. Comments written after the reveal may discuss the AI's number; unlike Zoom `tool_feedback` they are stored. Watch for "the AI scored this too high" chunks showing up in citations; if they do, filter them at ingest the way `zoom-2` does.
++- **Approve these two first when Chris is back** (pending, `zoom:2026-09-18`): 42:23 (quality and accuracy → component parts → relative to an ideal, in relationships between fundamentals, phase to phase) and 49:35 (the two comparisons). They are the missing Evaluate calibration; until they are retrievable, outcome-level comparisons will keep scoring a point above Chris. The endpoint exists (`/api/chunks/approve`, actor must be chris); the UI is session 8.
++- **The clerk says yes to new fields.** Every boolean added to the schema so far has needed a code guard within a day (how_stated, comparison made, delivery_to_peer, states_effect). Rule for any future field: define it by what it is NOT, and ship the deterministic check with it.
++- **`evidenceGuards` equipment check is lexical** (modal verbs in every sentence that names equipment). It will miss a recommendation phrased in the present tense and could mis-fire on "her boots should have held her up and didn't". Logged in `extraction_guards` so a mis-fire is visible in the result.
+ 
+diff --git a/lib/assembler.js b/lib/assembler.js
+index 1f7b1d9..a7ac6ef 100644
+--- a/lib/assembler.js
++++ b/lib/assembler.js
+@@ -144,7 +144,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+       ? `## CHRIS (AT Assessor) — GROUND TRUTH. Where Chris and any other source differ, Chris wins. Where two Chris statements differ, the more recent wins; report the pair in chris_conflicts.\n\n${renderChunks(chrisSlot.taken)}`
+       : '## CHRIS (AT Assessor)\n\n(no approved Chris statements retrieved for this session)',
+     exSlot.taken.length
+-      ? `## EXEMPLARS — sessions Chris scored himself, line by line: what Mark said, then Chris's number. These define the levels. For each line you score, find the exemplar line whose evidence most resembles this session's, start from Chris's number for it, and move off it only for a difference in the evidence that you can name. Cite the exemplar on every line it informed. An exemplar is evidence of level, not of content: never credit this session with something only the exemplar session said.\n\n${renderChunks(exSlot.taken)}`
++      ? `## EXEMPLARS — sessions Chris scored himself, line by line: what Mark said, then Chris's number. These define the levels. An exemplar line BOUNDS your score; it never sets it and is never a starting point for arithmetic. Evidence weaker than or equal to a line Chris scored N cannot score above N. Evidence stronger than a line Chris scored N scores at least N — how far above N, if at all, is decided by the scale and the ladder alone, never by counting the ways it is stronger. Compare on the line's UNIT (complete and partial instances), not on volume. Cite an exemplar only on lines where it actually bounded the score. An exemplar is evidence of level, not of content: never credit this session with something only the exemplar session said.\n\n${renderChunks(exSlot.taken)}`
+       : '## EXEMPLARS\n\n(none yet — Chris-scored exemplars arrive with blind scoring)',
+     `## PSIA REFERENCE\n\n${psiaSlot.taken.length ? renderChunks(psiaSlot.taken) : '(none retrieved)'}`,
+     `## SESSION EXTRACTION — inventory of what Mark actually said and did. Null / false / empty means he did not say it. This is the ONLY evidence of his performance.\n\n${extractionText}`,
+diff --git a/lib/coaching.js b/lib/coaching.js
+index 33bb005..ca087a6 100644
+--- a/lib/coaching.js
++++ b/lib/coaching.js
+@@ -75,6 +75,34 @@ export function utterances(session) {
+   return out;
+ }
+ 
++/**
++ * Who said this quote, and was it said out loud? Sentence by sentence (a clerk's quote often spans several), each
++ * matched to its closest utterance; a tie goes to Mark-spoken, so a line that is in his notes AND his presentation
++ * counts as spoken. → { mark_spoken, notes, other, unknown } as shares of the quote's words, + `by` = the largest.
++ */
++export function whoSaid(text, session) {
++  const us = utterances(session).filter((u) => !u.pair);
++  const share = { mark_spoken: 0, notes: 0, other: 0, unknown: 0 };
++  let total = 0;
++  const parts = sentencesOf(text); if (!parts.length && toks(text).length) parts.push(String(text));
++  for (const part of parts) {
++    const want = toks(part); if (!want.length) continue;
++    let top = null;
++    for (const u of us) {
++      const have = new Set(toks(u.text)); const list = [...have];
++      const hit = want.filter((w) => have.has(w) || list.some((h) => near(w, h))).length / want.length;
++      const cls = ['private_notes', 'root_cause'].includes(u.section) ? 'notes' : u.speaker === 'Mark' ? 'mark_spoken' : 'other';
++      const score = hit + (cls === 'mark_spoken' ? 0.001 : 0);
++      if (!top || score > top.score) top = { score, hit, cls, speaker: u.speaker };
++    }
++    total += want.length;
++    share[top && top.hit >= 0.7 ? top.cls : 'unknown'] += want.length;
++  }
++  for (const k of Object.keys(share)) share[k] = total ? Number((share[k] / total).toFixed(2)) : 0;
++  const by = Object.entries(share).sort((x, y) => y[1] - x[1])[0][0];
++  return { ...share, by };
++}
++
+ /**
+  * Locate the "Instead of X" half of a gap in what was actually said. The evaluator never saw the transcript (§8.2) —
+  * it quotes the extraction — so X can be Mark's words, a paraphrase, the PEER's words, or something from private notes.
+diff --git a/lib/extractStats.js b/lib/extractStats.js
+index e59edc5..26f96c7 100644
+--- a/lib/extractStats.js
++++ b/lib/extractStats.js
+@@ -43,7 +43,7 @@ export function comparisonFacts(c) {
+     let state = ['absent', 'partial', 'made'].includes(v.state) ? v.state : 'absent';
+     if (state === 'made' && !has(v.reference_quote)) state = has(v.quote) ? 'partial' : 'absent';
+     if (state === 'partial' && !has(v.quote) && !has(v.reference_quote)) state = 'absent';
+-    return { state, reference_quote: has(v.reference_quote) ? v.reference_quote : null, quote: has(v.quote) ? v.quote : null, prompted: v.prompted === true };
++    return { state, reference_quote: has(v.reference_quote) ? v.reference_quote : null, quote: has(v.quote) ? v.quote : null, prompted: v.prompted === true, ...(v.reference_is_marks_words === false ? { reference_is_marks_words: false } : {}) };
+   };
+   if (!c.vs_intent && !c.vs_ideal && 'made' in c) c.vs_intent = { state: c.made && has(c.intent_referenced_quote) ? 'made' : 'absent', reference_quote: c.intent_referenced_quote, quote: c.quote };
+   const vi = one(c.vs_intent), vd = one(c.vs_ideal);
+diff --git a/lib/prompts/evaluate.js b/lib/prompts/evaluate.js
+index 80dced4..8ef73b8 100644
+--- a/lib/prompts/evaluate.js
++++ b/lib/prompts/evaluate.js
+@@ -24,7 +24,11 @@ import { SCORED, SCORED_CRITERIA, LEGACY_CRITERIA, CRITERION_LABEL, SKILLS, PHAS
+ //   - Equipment: a recommendation or the predicted benefit of a change is not an instance.
+ //   - gap_to_next quotes Mark only (7uk7lnh's Prescription gap quoted the peer's restatement as his).
+ //   - exemplar_anchor: when exemplars are in the context the evaluator must place each line against one, in writing.
+-export const EVALUATE_VERSION = 'v2-rag-3';
++// v2-rag-4 (2026-09-19, same day): v2-rag-3's live run on 7uk7lnh scored Evaluate 4 (Chris 2) and wrote "Warrants two
++//   levels above: 4" / "three levels above: 4" in exemplar_anchor. The instruction said "start from Chris's number and
++//   move for a named difference"; with one exemplar, and that one the all-2s session, every line was "stronger than a 2"
++//   and the evaluator did arithmetic on it. An exemplar can only BOUND a score (≤N or ≥N); the rung is earned on the scale.
++export const EVALUATE_VERSION = 'v2-rag-4';
+ 
+ export const EVALUATE_SYSTEM = `You are scoring a PSIA-RM Alpine Trainer (AT) Movement Analysis session the way Chris, the AT Assessor, would score it on the 2026 AT MA/TU Assessment Form. The candidate is Mark, a Level 3 instructor working toward AT. AT candidates train instructors; the bar is above Level 3.
+ 
+@@ -54,7 +58,7 @@ HOW THE SCALE COUNTS UNITS (unprompted first; prompted refinement adds, prompted
+ PROCEDURE — for each of the six lines, climb from the bottom. Do not start from a number and confirm it.
+ 1. State the evidence count: which extraction items are complete instances of this line's unit, which are partial, which are absent. Use the extraction's own fields and numbers. Use only relationships Mark made; never relate two extraction items yourself (for example, do not set his observation against the peer's intent if he did not).
+ 2. Write the case for 2, then 3, then 4, then 5 — every rung, one or two sentences each, as an examiner would defend it for THIS session. A rung with no honest case says why in a few words ("No case: zero complete connections"). "No case needed" is never an acceptable entry. If even the case for 2 fails, write the case for 1.
+-3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not. When exemplars are in the context, check the rung against them before settling: in exemplar_anchor name the exemplar line closest in evidence, Chris's number for it, and whether this session's evidence is weaker, equal, or stronger and in what. A score more than one away from the closest exemplar line needs a named difference in evidence.
++3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not. When exemplars are in the context, an exemplar line bounds the rung, never sets it: weaker or equal evidence than a line Chris scored N cannot exceed N; stronger evidence scores at least N, and any rung above N must be earned on the scale by its own case — never "N plus the differences". Record the bound in exemplar_anchor.
+ 4. A fault Chris has named (in any Chris statement in the context) applies at every rung, not only as a ceiling on 5.
+ 5. Cite the chunks that informed the decision as "c:xxxxxxxx" ids, exactly as they appear in the context. Cite Chris first where he speaks to the line. Never cite an id that is not in the context.
+ 6. gap_to_next: one concrete move from this level to the next, in the form "Instead of X, say Y, because Z". X is something MARK said — never peer_restated, peer_answers, or an examiner's question. If he said nothing on the line, X is "leaving <the element> unsaid".
+@@ -95,7 +99,7 @@ OUTPUT — return ONLY this JSON object, no prose, no code fences:
+   "justifications": { "<each of the six scored lines>": { "2": "...", "3": "...", "4": "...", "5": "...", "1": "only if the case for 2 fails" } },
+   "citations": { "<each of the six scored lines>": ["c:xxxxxxxx"] },
+   "gap_to_next": { "<each of the six scored lines>": "Instead of X, say Y, because Z" },
+-  "exemplar_anchor": { "<each of the six scored lines>": "c:xxxxxxxx <line>: Chris N — this session weaker | equal | stronger because … (omit when the context has no exemplars)" },
++  "exemplar_anchor": { "<each of the six scored lines>": "c:xxxxxxxx <line>: Chris N — this session weaker | equal | stronger on the unit because …; bound: ≤N | ≥N (omit when the context has no exemplars)" },
+   "did_well": ["2–4 items, specific, quoting Mark where possible"],
+   "opportunity": ["2–4 items, highest leverage first"],
+   "key_learning": "the single most important thing for Mark to take from this session, in Chris's frame where he has supplied one",
+diff --git a/lib/prompts/extract.js b/lib/prompts/extract.js
+index d4cf257..2c38491 100644
+--- a/lib/prompts/extract.js
++++ b/lib/prompts/extract.js
+@@ -13,7 +13,7 @@
+ import { MODELS, completeJson } from '../llm.js';
+ import { SKILLS, PHASES, OUTCOMES, MA_TYPES } from '../vocab.js';
+ import { has, connectionStats, renderChains, comparisonFacts } from '../extractStats.js';
+-import { findOriginal } from '../coaching.js';
++import { findOriginal, whoSaid } from '../coaching.js';
+ 
+ // v3 (2026-09-17, after the first live run on 7n6ry6d scored +2 on four lines): the v2 clerk was still generous.
+ //   It marked "X was caused by Y" as how_stated, put body consequences in the outcome slot, recorded the predicted
+@@ -165,14 +165,25 @@ export function deliveryStats(session) {
+ export { connectionStats, renderChains };
+ 
+ /**
+- * Who actually said it? The clerk is told delivery_to_peer is Mark's words only; this checks it against the session's
+- * speaker labels. If the closest utterance is someone else's, the text moves to peer_restated (when that is empty) and
+- * the field is cleared — the evaluator must not score, or coach, a sentence Mark never said. Returns the guards fired.
++ * The clerk's rules, checked in code against who actually said what (the session's own speaker labels and sections).
++ * Every one of these was a real miss on 7uk7lnh (9/19 live runs). Returns the guards fired; each is also visible to
++ * the evaluator in `extraction_guards`.
++ *   1. prescription.delivery_to_peer must be Mark's words — the peer's restatement goes back to peer_restated.
++ *   2. Private notes were never spoken. A desired performance, task description, equipment statement or ideal whose
++ *      quote exists ONLY in the notes was not said to anyone: the flag is cleared. (In notes AND spoken = spoken.)
++ *   3. Equipment: a recommendation or the predicted benefit of a change is not an effect on observed performance
++ *      (Chris, 9/18, on exactly this). If every sentence of the quote that mentions equipment is modal / future
++ *      ("should", "might allow", "would", "will help"), states_effect_on_observed_performance is false.
++ *   4. vs_intent.reference_quote should be Mark's reference to the intent. When it is someone else's words the
++ *      state is left alone (his own comparison may still refer to the intent) but the fact is recorded.
+  */
+-export function speakerGuard(x, session) {
++const EQUIP = /\b(boots?|cuff|liner|skis?|bindings?|tune|tuning|edges?\s+(?:are|were)\s+(?:dull|sharp)|sidecut|(?:ski|boot|waist)\s+(?:length|width|radius|flex)|ramp\s+angle|canting|footbeds?|equipment|gear)\b/i;
++const MODAL = /\b(should|would|could|might|may|ought|recommend|suggest|consider|re-?examine|will\s+(?:help|allow|let|give|make)|needs?\s+to|if\s+(?:she|he|they|the skier)\b)/i;
++export function evidenceGuards(x, session) {
+   const fired = [];
++  if (!(Object.keys(session?.sections || {}).length || session?.transcript)) return fired;
+   const p = x.prescription;
+-  if (p && has(p.delivery_to_peer) && (Object.keys(session?.sections || {}).length || session?.transcript)) {
++  if (p && has(p.delivery_to_peer)) {
+     const hit = findOriginal({ instead: p.delivery_to_peer, quoted: true }, session);
+     if (hit.kind === 'quote' && hit.speaker && hit.speaker !== 'Mark') {
+       fired.push(`prescription.delivery_to_peer was ${hit.speaker}'s words ("${String(p.delivery_to_peer).slice(0, 60)}…") — cleared`);
+@@ -180,8 +191,26 @@ export function speakerGuard(x, session) {
+       p.delivery_to_peer = null;
+     }
+   }
++  const notesOnly = (q) => { if (!has(q)) return false; const w = whoSaid(q, session); return w.notes >= 0.7 && w.mark_spoken < 0.3; };
++  if (x.desired_performance?.stated && notesOnly(x.desired_performance.quote)) { x.desired_performance.stated = false; x.desired_performance.in_private_notes_only = true; fired.push('desired_performance: the ideal is in the private notes only — never spoken ⇒ stated = false'); }
++  if (x.task?.described && notesOnly(x.task.quote)) { x.task.described = false; x.task.in_private_notes_only = true; fired.push('task: described in the private notes only ⇒ described = false'); }
++  if (x.equipment?.addressed && notesOnly(x.equipment.quote)) { x.equipment.addressed = false; x.equipment.in_private_notes_only = true; fired.push('equipment: addressed in the private notes only ⇒ addressed = false'); }
++  const c = x.comparison_to_intended_outcome;
++  for (const k of ['vs_intent', 'vs_ideal']) {
++    const v = c?.[k]; if (!v || v.state === 'absent') continue;
++    if (notesOnly(v.quote)) { v.state = 'absent'; fired.push(`${k}: the comparison is in the private notes only ⇒ absent`); continue; }
++    if (k === 'vs_ideal' && notesOnly(v.reference_quote)) { v.reference_quote = null; fired.push('vs_ideal: the ideal it refers to is in the private notes only ⇒ reference cleared'); }
++    if (k === 'vs_intent' && has(v.reference_quote)) { const w = whoSaid(v.reference_quote, session); if (w.by === 'other') { v.reference_is_marks_words = false; fired.push("vs_intent.reference_quote is the peer's statement of intent, not Mark's reference to it (state left as the clerk gave it)"); } }
++  }
++  const e = x.equipment;
++  if (e?.addressed && e.states_effect_on_observed_performance === true) {
++    const about = (String(e.quote || '').match(/[^.!?\n]+[.!?]*/g) || []).filter((t) => EQUIP.test(t));
++    if (about.length && about.every((t) => MODAL.test(t))) { e.states_effect_on_observed_performance = false; fired.push('equipment: every sentence about the equipment is a recommendation or a predicted benefit ⇒ states_effect_on_observed_performance = false'); }
++  }
+   return fired;
+ }
++/** @deprecated name kept for callers and tests written in 6b. */
++export const speakerGuard = evidenceGuards;
+ 
+ /** Run Step 1 on a session. Returns the §8.1 JSON object (+ delivery_stats, extract_version). */
+ export async function extractSession(session) {
+@@ -190,8 +219,8 @@ export async function extractSession(session) {
+   out.ma_type = normalizeMaType(out.ma_type || session.type);
+   out.connection_stats = connectionStats(out);
+   out.cause_effect_chain = renderChains(out);
++  out.extraction_guards = evidenceGuards(out, session);            // before comparisonFacts: a cleared reference demotes "made" there
+   out.comparison_to_intended_outcome = comparisonFacts(out.comparison_to_intended_outcome);
+-  out.extraction_guards = speakerGuard(out, session);
+   out.delivery_stats = deliveryStats(session);
+   out.extract_version = EXTRACT_VERSION;
+   return out;
+diff --git a/scripts/ingest-scores.mjs b/scripts/ingest-scores.mjs
+index e316e71..7908aa7 100644
+--- a/scripts/ingest-scores.mjs
++++ b/scripts/ingest-scores.mjs
+@@ -21,6 +21,10 @@ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : nu
+ const DRY = flag('--dry'), only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--mentor').map((x) => x.replace(/^ma_/, ''));
+ const mentors = opt('--mentor') ? [opt('--mentor').toLowerCase()] : MENTORS;
+ 
++const KNOWN = ['--dry', '--reextract', '--comments', '--mentor'];
++const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
++if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')}) — nothing was written`); process.exit(1); }
++
+ const sessions = (await getMaSessions()).filter((s) => !only.length || only.includes(s.id));
+ if (only.length && sessions.length !== only.length) { console.error(`not found: ${only.filter((id) => !sessions.some((s) => s.id === id)).join(', ')}`); process.exit(1); }
+ mkdirSync('out', { recursive: true });
+diff --git a/scripts/score.mjs b/scripts/score.mjs
+index 1d702f7..22997c0 100644
+--- a/scripts/score.mjs
++++ b/scripts/score.mjs
+@@ -2,13 +2,17 @@
+ //   npm run score -- bzfutxv q5omsst 7n6ry6d          → prints a table, writes out/score-<id>.json
+ //   npm run score -- 7n6ry6d --compare "2,2,2,2,2,1"  → within-one check vs a scorecard (form order: CE,Ev,Rx,DP,Bio,Eq)
+ //   npm run score -- 7uk7lnh --compare chris          → same, against Chris's scorecard on the session as read from the Sheet
++//   npm run score -- 7uk7lnh --compare chris --reuse  → Step 2 only, on the extraction saved in out/score-<id>.json. Use this to A/B a
++//                                                        template change: extraction is not repeatable, so a fresh one confounds the comparison.
+ //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
+ import 'dotenv/config';
+-import { mkdirSync, writeFileSync } from 'node:fs';
++import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+ import { getMaSessions } from '../lib/sheet.js';
+ import { scoreSession } from '../lib/score.js';
+ import { SCORED_CRITERIA } from '../lib/vocab.js';
+ import { mentorScores } from '../lib/mentorScores.js';
++import { evidenceGuards } from '../lib/prompts/extract.js';
++import { comparisonFacts } from '../lib/extractStats.js';
+ 
+ const args = process.argv.slice(2);
+ const flag = (n) => args.includes(n);
+@@ -16,6 +20,9 @@ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : nu
+ const compareArg = opt('--compare');
+ const fixed = compareArg && /\d/.test(compareArg) ? compareArg.split(',').map(Number) : null;
+ const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare').map((x) => x.replace(/^ma_/, ''));
++const KNOWN = ['--compare', '--debug', '--include-self', '--reuse'];
++const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
++if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')})`); process.exit(1); }
+ if (!ids.length) { console.error('usage: npm run score -- <sessionId> [...] [--compare "2,2,2,2,2,1"] [--debug] [--include-self]'); process.exit(1); }
+ 
+ mkdirSync('out', { recursive: true });
+@@ -28,7 +35,16 @@ for (const id of ids) {
+   if (compareArg && !fixed && !card) { console.error(`${id}: no ${compareArg} scorecard on this session`); fail = true; continue; }
+   const compare = fixed || (card ? SCORED_CRITERIA.map((k) => card.scores[k]) : null);
+   console.log(`\n── ${id} · ${s.date} · ${s.type} · ${s.who} · ${s.activity}`);
+-  const r = await scoreSession(s, { debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
++  let reused = null;
++  if (flag('--reuse')) {
++    reused = existsSync(`out/score-${id}.json`) ? JSON.parse(readFileSync(`out/score-${id}.json`, 'utf8')).extraction : null;
++    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run`); fail = true; continue; }
++    console.log(`  reusing saved extraction (v${reused.extract_version}) — Step 1 skipped`);
++    // The code guards are part of Step 1; run the current ones over the saved inventory so a guard change is testable on fixed evidence too.
++    reused.extraction_guards = [...new Set([...(reused.extraction_guards || []), ...evidenceGuards(reused, s)])];
++    reused.comparison_to_intended_outcome = comparisonFacts(reused.comparison_to_intended_outcome);
++  }
++  const r = await scoreSession(s, { extraction: reused || undefined, debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
+   writeFileSync(`out/score-${id}.json`, JSON.stringify(r, null, 2));
+   const old = s.parsedSummary?.scores || {};
+   for (const [i, k] of SCORED_CRITERIA.entries()) {
+diff --git a/scripts/selftest-ingest.mjs b/scripts/selftest-ingest.mjs
+index b114d78..8f4ce95 100644
+--- a/scripts/selftest-ingest.mjs
++++ b/scripts/selftest-ingest.mjs
+@@ -139,7 +139,7 @@ const asm = await assemble(mkX(), { sessionId: 'ma_7uk7lnh', deps: { embedQuery:
+ assert.deepEqual(calls.find((c) => c.types?.[0] === 'exemplar' && c.types.length === 1).authors, ['chris'], "exemplar slot asks for Chris's only");
+ assert.deepEqual(asm.manifest.exemplar_sessions, ['7n6ry6d'], "scoring 7uk7lnh sees 7n6ry6d's exemplar and not its own (nor Gates's)");
+ assert.ok(asm.context.includes('Equipment — CHRIS: 1') && !asm.context.includes('Fall Line Bumps'), 'own exemplar text absent from the context');
+-assert.ok(asm.context.includes('start from Chris\'s number'), 'anchoring instruction rides with the exemplars'); assert.ok(asm.manifest.tokens.total <= BUDGET.total);
++assert.ok(asm.context.includes('BOUNDS your score') && !/start from Chris/.test(asm.context), 'exemplars bound a score; they are never a starting point for arithmetic (7uk7lnh, v2-rag-3)'); assert.ok(asm.manifest.tokens.total <= BUDGET.total);
+ assert.equal(Object.values(asm.chunkIndex).find((c) => c.slot === 'exemplars').type, 'exemplar', 'exemplar is citable');
+ assert.ok(normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).embed_text === 'b' && hashText('a') === normalizeChunk({ text: 'a', source: 'chris_score', type: 'exemplar', embed_text: 'b' }).text_hash, 'hash is of the stored text, not the embedded text');
+ 
+diff --git a/scripts/selftest-score.mjs b/scripts/selftest-score.mjs
+index ec8468f..77a910f 100644
+--- a/scripts/selftest-score.mjs
++++ b/scripts/selftest-score.mjs
+@@ -71,6 +71,28 @@ const gx = { prescription: { delivery_to_peer: 'Focus on initiating with a guide
+ assert.equal(speakerGuard(gx, sess).length, 1); assert.equal(gx.prescription.delivery_to_peer, null); assert.ok(gx.prescription.peer_restated.startsWith('Focus on'), "the peer's words go back where they belong");
+ const gy = { prescription: { delivery_to_peer: 'Keep your zipper facing the fall line and steer both feet from the top of the turn.' } };
+ assert.equal(speakerGuard(gy, sess).length, 0, "Mark's own words are left alone");
++// evidence guards, on the real 7uk7lnh quotes from the failed v2-rag-3 live run (9/19)
++const { evidenceGuards } = await import('../lib/prompts/extract.js');
++const { whoSaid } = await import('../lib/coaching.js');
++const ideal = 'Turn shape is symetrical above and below the fall line and rounded, corridor is consitant through out the run and speed in the turn is relatively similiar at the top and bottom of the turn and the skier COM has a consistant fall line orientation.';
++const eqQ = "the skier should reexamine their boot selection. The skier has the ability to hyperflex their ankles as forces build. The longer length of the skier's tibia and femur are also a contributing factors. A more rigid cuff or boot fit might allow the skier to have better fore/aft control. This will help the skier be more centered by having the boot better support the skier as they move their center of mass in terrain with higher forces.";
++const peerIntent = 'I wanted the skis to pivot and release cleanly through each trough so I could stay stacked and control speed down the fall line.';
++const bumps = (where) => ({ sections: { private_notes: where === 'notes' ? ideal : 'short note', peer_dialog: `Mark: What were you going for?\nPeer: ${peerIntent}`, presentation: `${where === 'spoken' ? `${ideal} ` : ''}the skier struggled to maintain a corridor and a symmetrical turn shape, and speed control largely depended on the top of the bump. ${eqQ}` } });
++const inv = () => ({ desired_performance: { stated: true, quote: ideal }, task: { described: true, quote: ideal }, equipment: { addressed: true, quote: eqQ, states_effect_on_observed_performance: true },
++  comparison_to_intended_outcome: { vs_intent: { state: 'made', reference_quote: peerIntent, quote: 'the skier struggled to maintain a corridor' }, vs_ideal: { state: 'made', reference_quote: ideal, quote: 'the skier struggled to maintain a corridor and a symmetrical turn shape' } } });
++const xn = inv(); const gn = evidenceGuards(xn, bumps('notes')); const cn = comparisonFacts(xn.comparison_to_intended_outcome);
++assert.equal(xn.desired_performance.stated, false, 'an ideal that exists only in private notes was never stated'); assert.equal(xn.task.described, false);
++assert.equal(cn.vs_ideal.state, 'partial', 'a comparison to an ideal he never said out loud is partial'); assert.equal(cn.both_made, false);
++assert.equal(xn.equipment.states_effect_on_observed_performance, false, 'should / might allow / will help = recommendation, not an effect (Chris, 9/18)'); assert.equal(xn.equipment.addressed, true);
++assert.equal(cn.vs_intent.state, 'made'); assert.equal(cn.vs_intent.reference_is_marks_words, false, "the peer's words as the reference are flagged, not punished"); assert.equal(gn.length, 5);
++const xs = inv(); evidenceGuards(xs, bumps('spoken'));
++assert.equal(xs.desired_performance.stated, true, 'in the notes AND spoken = spoken'); assert.equal(comparisonFacts(xs.comparison_to_intended_outcome).both_made, true);
++const eff = { equipment: { addressed: true, states_effect_on_observed_performance: true, quote: 'Her boots are too soft, so the cuff collapsed in every trough and her hips dropped behind her feet.' } };
++evidenceGuards(eff, { sections: { presentation: eff.equipment.quote } }); assert.equal(eff.equipment.states_effect_on_observed_performance, true, 'a stated effect on what she did is left alone');
++assert.equal(whoSaid(peerIntent, bumps('notes')).by, 'other'); assert.equal(whoSaid(ideal, bumps('notes')).by, 'notes'); assert.equal(whoSaid(ideal, bumps('spoken')).by, 'mark_spoken');
++const { EVALUATE_SYSTEM: ES } = await import('../lib/prompts/evaluate.js');
++assert.ok(/bounds the rung, never sets it/.test(ES) && !/closest in evidence/.test(ES));
++
+ const idx = { ...a.chunkIndex, '0000aaaa': { id: '0000aaaa-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-18', type: 'exemplar', source_ref: 'session:7uk7lnh', title: 't', text: 'EXEMPLAR …' } };
+ const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['c:0000aaaa'] }, exemplar_anchor: { evaluate: 'c:0000aaaa Evaluate: Chris 2 — equal' } }, { extraction: x, chunkIndex: idx });
+ assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);
+-- 
+2.43.0
+

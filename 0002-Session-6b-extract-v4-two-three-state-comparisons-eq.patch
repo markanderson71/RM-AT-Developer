@@ -1,0 +1,633 @@
+From eb82d27f45cf0588f0542d636b4c4f9d182e429f Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 19 Sep 2026 21:22:37 +0000
+Subject: [PATCH 2/2] Session 6b: extract v4 (two three-state comparisons,
+ equipment effect, Mark-only delivery), evaluate v2-rag-3 (single-instance
+ scale, exemplar anchor), architecture doc
+
+---
+ AT_Scoring_Architecture.md   | 54 +++++++++++++++++++++++++++--------
+ lib/coaching.js              | 21 ++++++++++----
+ lib/extractStats.js          | 25 ++++++++++++++++
+ lib/prompts/evaluate.js      | 41 +++++++++++++++++----------
+ lib/prompts/extract.js       | 55 ++++++++++++++++++++++++++++++------
+ lib/score.js                 |  9 ++++--
+ scripts/score.mjs            |  2 ++
+ scripts/selftest-history.mjs |  6 +++-
+ scripts/selftest-score.mjs   | 20 +++++++++++++
+ src/tabs/Rationale.jsx       | 15 ++++++++--
+ 10 files changed, 203 insertions(+), 45 deletions(-)
+
+diff --git a/AT_Scoring_Architecture.md b/AT_Scoring_Architecture.md
+index e18482f..85bed66 100644
+--- a/AT_Scoring_Architecture.md
++++ b/AT_Scoring_Architecture.md
+@@ -1,6 +1,6 @@
+ # AT Development Journal — Scoring System Architecture
+ 
+-**Status:** Building — sessions 1–4 done; session 5 deployed, try-again timed at 50 s, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)** (37 Chris statements from the 9/18 call still pending his approval); next is 6
++**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6 built and offline-verified, **live steps pending (ingest the two scorecards, rescore with exemplars, third scorecard when Chris is back)** (37 Chris statements from the 9/18 call still pending his approval); next is 7
+ **Owner:** Mark Anderson
+ **Ground truth:** Chris (AT Assessor)
+ **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
+@@ -169,10 +169,14 @@ Approval view (new, mentor-only, in Checkpoints or its own tab): pending chunks
+ 
+ Every new comment in an MA History thread becomes a `chris_comment` chunk, criteria inferred from text, linked by `source_ref` to the session. Approved by default — he wrote it deliberately.
+ 
++Implementation notes (session 6): `appendFeedback` — the one writer of the thread — calls `/api/ingest/comment` after the Sheet write, fire-and-forget; the endpoint re-reads the comment **from the Sheet** by timestamp (the thread is the record; nothing a client posts goes straight into the store). Comments over ~600 chars are split into single points on the blank lines he typed — verbatim, grouped never reworded, lead-ins ride forward and short tails ride back; tags are keyword tags, no model call. A comment is skipped if the store holds *any* chunk (live or superseded) with its timestamp, so bootstrap's whole-comment chunks and the hand-split 9/17 comment are never doubled. Scorecards in the thread (either shape) are not comments — §6.4 owns them. `npm run ingest:scores -- --comments` catches up anything the hook missed.
++
+ ### 6.4 Chris blind scores (continuous — the feedback loop)
+ 
+ See §9. Each submission creates one `chris_score` chunk per criterion where a note exists, plus one `exemplar` chunk containing: session extraction (§8.1) + Chris's six scores + his note. Exemplars are what make the scorer sound like Chris.
+ 
++Implementation notes (session 6): the scorecard is read from the Sheet by `mentorScores()` (`/lib/mentorScores.js` — the same reader the screen uses; structured blind items and hand-posted lines both count), never taken from the request. **Exemplar text** is organised by form line — what Mark said (rendered from the extraction's own fields: connection counts and each chain flagged complete / partial-with-what's-missing / prompted, the two comparisons, the prescription chain, equipment flags), then the mentor's number — capped at 1.8K tokens so three fit the slot; it carries **no AI score, rationale, or rewrite**. It is **embedded on `extractionToText(extraction)`**, the same function that builds the query, not on the rendered text (`embed_text`, `store.insertChunks`) — like is compared with like, and his numbers don't compress exemplars into one similarity band (the session 1 finding). The blind form has one note field, so `chris_score` note chunks are the note split into single points (same splitter as comments), each tagged to the lines it speaks to and stating what he gave them; they ride in the Chris slot. Metadata holds the full extraction, `blind`, and **`ai_at_submit` — pinned at first ingest and never moved by a rescore or re-ingest**. Idempotent; a changed scorecard or a re-extraction (`--reextract`) replaces the exemplar by supersession; exactly one live exemplar per mentor per session. Chris's exemplar supersedes the session's `past_session` chunk (§6.7); Gates's and Mike's are stored (inter-rater data) but supersede nothing and are not retrieved as exemplars.
++
+ ### 6.5 Development Assessment (on save)
+ 
+ Snapshot as `mentor_assessment` chunk; supersede prior.
+@@ -204,7 +208,7 @@ Total ~30K tokens for the evaluate step. Fixed. Never grows.
+ 
+ If Chris chunks under-fill, PSIA reference takes the slack **up to a 12K cap** (session 4: with 9 Chris chunks and no exemplars, uncapped slack would hand PSIA ~20K of marginal matches). If over budget, trim PSIA reference first, exemplars second, never Chris chunks or definitions.
+ 
+-Definitions are *fetched* by `source_ref` prefix (`at-ma-tu-assessment-form-2026.md#`), not searched. Exemplar slot takes **Chris-scored exemplars only** (`source = chris_score`); `past_session` chunks carry old-scorer numbers and are never shown to the evaluator as examples.
++Definitions are *fetched* by `source_ref` prefix (`at-ma-tu-assessment-form-2026.md#`), not searched. Exemplar slot takes **Chris-scored exemplars only** (`source = chris_score`, `author = chris`, `type = exemplar`); `past_session` chunks carry old-scorer numbers and are never shown to the evaluator as examples. Exemplars are excluded from the Chris slot *in the query* (type filter), so a growing pile of them never uses up that slot's candidates. The exemplar block's header carries the anchoring instruction (find the closest exemplar line, start from Chris's number, move only for a nameable difference in evidence; an exemplar is evidence of level, never of content). `manifest.exemplar_sessions` lists which sessions were shown.
+ 
+ ### 7.2 Query
+ 
+@@ -246,6 +250,8 @@ Output: JSON inventory. **No scoring, no judgment.**
+ }
+ ```
+ 
++**Extract v4 (session 6), additive to the schema above:** `comparison_to_intended_outcome` is two comparisons — `vs_intent` (observed performance against the skier's own stated intent) and `vs_ideal` (intent and/or performance against what the task requires) — each `absent | partial | made` with `reference_quote`, `quote`, `prompted`. "Made" without the reference quoted is demoted in code (`comparisonFacts`, `/lib/extractStats.js`), which also still writes the v3 fields (`made`, `quote`, `intent_referenced_quote`) and adds `both_made`; a stored v3 object is lifted on read. `equipment.states_effect_on_observed_performance` separates an effect on what this skier did from a recommendation or its predicted benefit. `prescription.delivery_to_peer` is Mark's words only, and `speakerGuard` checks it against the session's speaker labels — the peer's restatement is moved back to `peer_restated` and logged in `extraction_guards`.
++
+ Why a separate step: when the model reads and scores simultaneously it pattern-matches criteria as it reads and lands on "didn't check every box." Inventorying everything demonstrated *before* judging forces whole-picture evaluation. This enforces "evidence descriptors, not checklists" by structure rather than instruction.
+ 
+ ### 8.2 Step 2 — Evaluate (Opus)
+@@ -283,6 +289,8 @@ Floor rules (added session 4 — the rules above all guard against scoring low;
+ - "Beginning to appear" is a 2, not a 3. Accurate-but-generic is L3 work. Volume is not depth.
+ - Score against the essential elements each form definition names, not general competence.
+ 
++Scale and units (v2-rag-3, session 6 — applied with exemplar ingestion, against both scorecards): **one complete instance standing alone is a 3 at most**; 4 needs the element to recur, or — on a line naturally said once (the evaluate comparison, prescription, desired performances, equipment) — one instance complete in every link *and* threaded into the rest of the analysis. Evaluate's complete unit is both comparisons made; one of two is partial. Equipment: a recommendation or predicted benefit is partial at most. `gap_to_next`'s X is something Mark said, never the peer's or examiner's words. With exemplars in the context the evaluator must write `exemplar_anchor` per line (closest exemplar line, Chris's number, weaker / equal / stronger and in what); more than one away from the closest exemplar line needs a named difference in evidence. The evaluate unit's two-comparison *structure* is in the template because the evaluator has to read the v4 fields; Chris's own wording of it is a pending Zoom chunk and, once he approves it, arrives by retrieval and outranks the template.
++
+ Chris's own content (X→Y→Z frame, peer piece as coaching cue "plus", the equipment trio, the prescription chain) is **not** in the template. It lives in the store as seven single-point chunks and arrives by retrieval, cited.
+ 
+ ### 8.3 Output (backward compatible)
+@@ -301,7 +309,7 @@ Chris's own content (X→Y→Z frame, peer piece as coaching cue "plus", the equ
+ }
+ ```
+ 
+-`justifications` carries `"2"` and `"1"` keys when the case for 3 fails. Also additive (session 4): `section_averages`, `meets_standards`, `citation_details` (author/date/text per cited chunk, for §12.2), `chris_conflicts`, `quality{citations_invalid, criteria_without_citation, guards_applied}`, `extraction`, `meta{scorer, models, ms, context manifest}`.
++`justifications` carries `"2"` and `"1"` keys when the case for 3 fails. Also additive (session 4): `section_averages`, `meets_standards`, `citation_details` (author/date/text per cited chunk, for §12.2), `chris_conflicts`, `quality{citations_invalid, criteria_without_citation, guards_applied}`, `extraction`, `meta{scorer, models, ms, context manifest}`. Session 6, additive: `exemplar_anchor{line: "…"}`, `quality.exemplars_in_context[]`, `quality.exemplars_cited[]`, `quality.exemplar_lines_anchored`, `quality.extraction_guards[]`.
+ 
+ `scores`, `score_rationale`, `did_well`, `opportunity`, `key_learning` — existing fields, unchanged shape. `justifications`, `citations`, `gap_to_next`, `time_note` — new. Existing `parseSummary` keeps working.
+ 
+@@ -319,6 +327,8 @@ Agreement rate is the system's truth. It decides when to prune calibration rules
+ 
+ Chris still has the free-text comment thread for coaching feedback to Mark. The blind form is for scores.
+ 
++**Agreement calculation (session 6, `/lib/agreement.js`, pure; `GET /api/agreement?mentor=chris&window=20`).** (1) The AI number compared is the one the mentor was blind to: his submission's `ai_at_submit`; else the score pinned in the exemplar's metadata at first ingest; else — flagged `unpinned` — the current summary. (2) 2026 form only; a session whose AI score is an old-scorer result is listed under `excluded` with the reason. (3) **Blind and not-blind scorecards are tallied separately and the headline — and the §1 targets — is blind only**: 7n6ry6d (not blind, and the scorer was calibrated on it) is reported but never counts toward the target. (4) A line without both numbers is in neither numerator nor denominator. Output: `blind`, `recent` (last `window` blind cards), `not_blind`, `all` — each with overall and per-criterion n / exact / within-one / % / AI-over / AI-under / signed mean Δ / same-result — plus `trend[]` per blind session, `by_scorer` (so a template change shows up as its own series), `sessions[]`, `excluded[]`. The response contains AI numbers: session 8's panel must request it only for a viewer who is unsealed on every row, or with `mentor=<viewer>` (every row is then a session he has scored).
++
+ ## 10. Module layout
+ 
+ New code is new files. **The old JSX is read only to harvest bug fixes when rebuilding a tab.** Never extend it.
+@@ -349,8 +359,13 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
+ /api/ingest/psia.js         NEW — accepts doc text + section type, chunks, embeds, inserts
+ /api/ingest/zoom.js         NEW — accepts transcript (+ speakerMap; without one returns a speaker report only), runs extraction, inserts pending chunks
+ /lib/ingest/zoom.js         NEW — parse → windows → Opus → quote/drift guards → pending; shared by the endpoint and the CLI
+-/api/ingest/comment.js      NEW — called on new MA comment, inserts chris_comment chunk
+-/api/ingest/score.js        NEW — called on blind-score submit, inserts chris_score + exemplar
++/api/ingest/comment.js      NEW — called by `appendFeedback` after a mentor comment lands in the Sheet; re-reads it by timestamp, splits, inserts chris_comment chunks
++/api/ingest/score.js        NEW — called by `appendFeedback` after a blind scorecard lands; reads the scorecard from the Sheet, inserts exemplar + chris_score note chunks, supersedes past_session
++/api/agreement.js           NEW — §9 agreement, read-only (12 functions now deployed — Vercel Hobby's ceiling; see §17)
++/lib/ingest/score.js        NEW — renderExemplar, noteChunks, ingestScore; shared by the endpoint and the CLI
++/lib/ingest/comment.js      NEW — splitPoints (verbatim), commentChunks, ingestComments
++/lib/mentorScores.js        NEW — the one mentor-scorecard reader (moved from src/lib/scorecard.js, which re-exports it): cleanScore, formMath, formatScoreLine, parseScoreLine, mentorScores, isScoreItem
++/lib/agreement.js           NEW — pure agreement math (§9)
+ /api/chunks/pending.js      NEW — list pending chunks for approval view
+ /api/chunks/approve.js      NEW — approve / edit / delete / supersede
+ /api/chunks/search.js       NEW — debug endpoint: query → retrieved chunks (retrieval eval)
+@@ -366,7 +381,9 @@ New code is new files. **The old JSX is read only to harvest bug fixes when rebu
+ /lib/prompts/zoom.js        NEW — §6.2 extraction template
+ /scripts/bootstrap.mjs      NEW — one-time: pull Sheet data via /api/sheet, ingest all sources (§13 session 1)
+ /scripts/zoom.mjs           NEW — CLI for the /api/ingest/zoom path; `--dry`, `--replace`, `--pending`
+-/scripts/score.mjs          NEW — CLI for the /api/score path; `--compare` checks within-one against a scorecard
++/scripts/score.mjs          NEW — CLI for the /api/score path; `--compare "2,2,2,2,2,1"` or `--compare chris` (his scorecard from the Sheet) checks exact / within-one; prints which exemplars were shown and cited
++/scripts/ingest-scores.mjs  NEW — backfill / catch-up: every mentor scorecard → exemplar, `--comments`, `--reextract`, `--dry`; prints agreement
++/scripts/selftest-ingest.mjs NEW — offline: exemplar text, idempotence, pin survives rescore, comment split, agreement reproduces §16's 3/6·5/6 and 5/12·11/12, self-exclusion
+ /scripts/retrieval-eval.mjs NEW — §14
+ ```
+ 
+@@ -469,12 +486,19 @@ Recorded so they aren't re-argued.
+ | Every MA History write sends one Sheet column (`summary` or `mentorFeedback`), and the comment thread is re-read and merged before it is written | Apps Script `update` is per-column. Whole-row saves from memory let Chris's comment and Mark's rescore overwrite each other. |
+ | "Try that line again" runs the full ladder on one line, retrieves on the session's ORIGINAL extraction, and is never saved | A shortened ladder is a different scorer; retrieval that shifts with the rewrite makes before/after incomparable; practice is not a session. |
+ | A submitted blind scorecard is final and carries `ai_at_submit` | A score edited after the reveal is anchored. Agreement (§9) must compare against the AI score he was blind to, even after a rescore. |
++| Exemplars are embedded on the extraction text, stored as per-line evidence + Chris's number, and carry no AI output | The query is `extractionToText(extraction)`; embedding the same thing compares like with like, and session 1 showed scores in embedded text compress every session into one band. An exemplar that showed AI numbers or rationale would teach the scorer its own bias back. Decided 2026-09-19. |
++| Exemplar slot is Chris's only; other mentors' scorecards are stored, not shown | He is the assessor; the levels the evaluator is taught are his. Gates/Mike cards are inter-rater data. |
++| The AI score a scorecard is compared with is pinned once (`ai_at_submit`, else at first ingest) | A rescore — including one made better *by that very scorecard* — must not rewrite history, or agreement drifts toward 100% by construction. |
++| Agreement headline and §1 targets count blind scorecards only | A card given after seeing the AI number is anchored; a card the scorer was calibrated on is not a test. Both are reported, neither counts. |
++| Knowledge ingestion is triggered by the app but reads from the Sheet | The Sheet row is the record. A client can ask for a session to be ingested; it cannot post a scorecard or a comment into the store that the thread doesn't hold. Failure never blocks the Sheet write; the CLI catches up. |
++| One complete instance alone = 3 at most; 4 = recurs, or (single-occurrence lines) complete and threaded | Two over-scores on 7uk7lnh came from "complete: 1 · partial: 0" having no rung. Applied with exemplars, tested on both scorecards, not tuned line by line. Decided 2026-09-19. |
+ | Backend/frontend sessions alternate | Each session is one kind of work; review is easier; the scoring loop is live by session 6 without waiting for all tabs. |
+ 
+ ## 16. Session log
+ 
+ *(append one line per build session: date · session # · built · decided · deferred)*
+ 
++- **2026-09-19 · Session 6 (backend — the feedback loop)** · Built, as two commits so each can be measured on its own. **6a (exemplars alone, scorer unchanged `v2-rag-2`):** `lib/mentorScores.js` (the one scorecard reader, moved out of `src/lib/scorecard.js`, which re-exports it; `vocab.MENTORS`); `lib/ingest/score.js` + `api/ingest/score.js` (scorecard read from the Sheet → per-line exemplar ≤1.8K tok embedded on the extraction text + note chunks; AI score pinned once; idempotent; replaces by supersession; Chris's supersedes `past_session`); `lib/ingest/comment.js` + `api/ingest/comment.js` (verbatim single-point split, seen-by-timestamp guard); `lib/agreement.js` + `api/agreement.js`; `store.js` += `embed_text`, ids returned from `insertChunks`, `liveBySourceRef`, `commentTimestamps`, `listExemplars`; assembler: exemplar slot `author = chris`, exemplars excluded from the Chris slot in the query, anchoring header, `manifest.exemplar_sessions`; `src/api.js` `appendFeedback` → fire-and-forget ingest with one retry; `scripts/ingest-scores.mjs`, `score.mjs --compare chris`; `Rationale.jsx` draws a cited exemplar as "Compared with a session Chris scored…", never inside quotation marks (it is his number, not his words), and the coaching panel no longer picks one as its Chris quote. **6b (extract v4 / `v2-rag-3`):** two three-state comparisons replace `comparison_to_intended_outcome.made` (v3 fields still written; stored v3 lifted on read); `equipment.states_effect_on_observed_performance`; `delivery_to_peer` Mark-only + `speakerGuard` in code; scale: one complete instance alone = 3 at most; `exemplar_anchor`; `gap_to_next` quotes Mark only; `unitCheck` / `mergePassage` follow (a rewrite that adds the ideal no longer erases a comparison to intent made elsewhere); template 2,989 tok of 3,000 — wording trimmed, no standing rule removed. · Verified offline: `npm run test:ingest` (exemplar text; three fit the slot even from an oversized extraction; re-run writes nothing and makes no model call; the pinned AI score survives rescore + re-ingest; Gates's card supersedes nothing; comment split is verbatim and idempotent; **agreement reproduces §16: blind 3/6 exact · 5/6 within one · Evaluate +2; all 5/12 (41.7%) · 11/12 (91.7%)**; scoring 7uk7lnh is shown 7n6ry6d's exemplar and not its own or Gates's); `test:score` (v4 facts, speaker guard on the 7uk7lnh peer-restatement case, exemplar bookkeeping); `test:history`, `test:exam`, `test:zoom`; `vite build` clean. · **Not verified here (no keys): every live step.** Done-when is open on all three counts until Mark runs it: (1) `npm run ingest:scores` → two exemplars in the store; (2) `npm run score -- 7uk7lnh --compare chris` and `-- 7n6ry6d --compare chris` → each shows the other's exemplar, cites it, within-one on all six; (3) **the third blind scorecard does not exist yet** — it arrives when Chris scores a fresh exam in the app (the same event that closes session 5), and the submit hook ingests it. · Decided: six new §15 rows. · Flag: with n = 2 and self-exclusion, each rescore sees exactly one exemplar, and 7n6ry6d's scorecard is the one `v2-rag-2`'s AT-bar paragraph was written from — agreement on these two after 6b is a regression check, not evidence; the first evidence is the third session, scored blind by `v2-rag-3` before Chris sees it. · Deferred: see §17.
+ - **2026-09-19 · Session 5 — live check, left open** · Deployed. Coaching panel made collapsible like the other sections (choice remembered). Try-that-line-again on `ma_7uk7lnh`: 139 s first try (≈90 s of it rebuilding the shed extraction, once per session per browser), **50 s steady state** — the under-a-minute half of done-when is met, with ~10 s of margin; not tuned on two data points (lever in §17). Chris's 9/18 verbal scorecard posted on 7uk7lnh in the parsed format (`scored blind`); the tab shows exact 3/6 · within-one 5/6 · same result, Evaluate AI +2 — matches the 9/18 log. · **Open: Chris scores one session blind in the new app** (he is away ~1 week). Decided with Mark: move on to session 6 and close this item when Chris is back; preferably on a fresh exam scored by `v2-rag-2`, which also gives session 6 its third scorecard. Do not rescore 7uk7lnh — it is the only session scored before Chris saw anything.
+ - **2026-09-19 · Session 5 (frontend — MA History + coaching)** · Mark: happy with the MA History layout; the problem is that scores have not been consistent across the application. Diagnosis (old JSX): `summary` read in eight places — exam screen ranks attempts by sum of the legacy six, MA History shows top-level scores, Progress trends `if (scores[k])` (drops 0/missing, so averages run over different lines per session), prompts read legacy keys by name, and three different fallbacks when the JSON doesn't parse; session 3's `sectionAverages` repeated it (a legacy attempt got "TU 4.00" from one line). · Built: `src/lib/scorecard.js` — `scorecard(session,{viewer})` is the only reader: form (`2026` | `legacy`), six lines with null for missing, section averages and verdict computed from the lines (stored values ignored, mismatch → `warnings`), best-attempt rank (MA avg + TU avg; legacy never outranks 2026), mentor scorecards (structured blind items and hand-posted "… scorecard …" lines, attributed to the mentor named), per-line deltas, and the blind seal; `exam.js`, `ATExam.jsx` score screen and the legacy prompt history now go through it (no score arithmetic left elsewhere). `components/ScoreViews.jsx` (chips/grid/verdict/old-scorer tag — same view in the exam and in history). `tabs/MAHistory.jsx` (old layout; newest session open, others collapse; structured sections rendered in full with speaker colors — fixes Chris's "I only got one sentence" of peer delivery; rescore through extract → evaluate with step line, previous score kept in `score_history`, **no legacy fallback on rescore** — a failure leaves the existing score alone; draft-persisting comment box with mic; delete and rescore are candidate-only). `tabs/Rationale.jsx` (§12.2: Chris quoted inline with date, ingest-written title shown outside the quotation marks; PSIA/form citations and the level-by-level ladder collapsed). `tabs/BlindScoreForm.jsx` (§12.1: six tap rows on the 2026 form, live section averages, note, draft in localStorage, confirm, final on submit). Blind: `sealSessions()` takes the AI summary out of the session object before it reaches React state for any session the mentor hasn't scored; a sealed card carries no numbers or text; other mentors' scorecards are withheld from the thread until he submits his own; on submit the item stores `scores`, `note`, `ai_at_submit` and a text line in the same format Mark posted by hand for 7n6ry6d. **Coaching:** `lib/coaching.js` + `tabs/CoachingPanel.jsx` — per line, lowest first: what Mark said (located in the transcript, typo-tolerant), the evaluator's rewrite, the because-clause, the first Chris citation; labelled AI SUGGESTIONS; says so when the quoted line was the *peer's* (7uk7lnh Prescription), came only under examiner probing (7uk7lnh Desired Performances), or was in private notes and never spoken. **Try that line again:** `extractPassage` (same clerk, same schema, peer intent + task as reference) → `mergePassage` (items quoted from the replaced sentence out, passage items in, stats recomputed) → `assemble(original, {evidence: merged})` → `buildEvaluateLineUser` (one line, full ladder, not told the previous score) → `normalizeLine` (same clamps, citation check, equipment guard) + `unitCheck` (the evaluator's unit, checked in code against the passage alone, with the missing links named). Practice log in localStorage, last 5 per line. **Pre-exam brief** on the setup screen: three lowest lines of the last 2026-form session, ranked by Chris's scorecard when he has one. `parseAIJson` strategy 2 now rebuilds rationale for `desired_performances` and `equipment`. Summary fit: cited text 400 (Chris) / 200 (others); shed order is now justifications → extraction → citation_details, because coaching needs the extraction (7uk7lnh's was shed). `src/api.js` += `saveMaSummary`, `appendFeedback` (re-read + merge), `deleteMaSession`, `scoreLineTry`. · Verified: `npm run test:history -- <export>` (offline; also runs every row of the live MASessions export through `scorecard()`: 13 sessions → 1 on the 2026 form, 10 old-scorer, 2 unscored, 0 unparsed, 0 warnings; reproduces the 9/18 comparison exactly — exact 3/6, within-one 5/6, Evaluate +2, same result); `scripts/rendertest-history.jsx` server-renders the tab from the live export as Mark, as Chris before scoring (no AI output in any sealed session), and as Chris after submitting (reveal, per-line delta, coaching read-only); `scoreLine` run end to end with models and store mocked (query = original extraction, evidence = merged, nothing written); `vite build` clean; score/exam/zoom selftests pass. · **Not verified here (no keys, no deploy): the two model calls of try-again and its wall-clock; the blind submit against the live Sheet.** Done-when stays open until deployed: Chris scores one session blind; Mark reworks one line in under a minute. · Deferred: see §17.
+ - **2026-09-19 · Session 2 (backend)** · Built: `lib/prompts/zoom.js` (`zoom-1`: mentor-only, one point per item, no generalizing, read-aloud ≠ asserted, modeled deliveries kept whole as `exemplar`, `hedged` + note, ASR fixes listed per chunk, verbatim `quote`, `tool_feedback` side channel); `lib/ingest/zoom.js` (Plaud/Zoom parser, speaker report, ~12K-char core windows with context-only padding run as parallel Opus calls, quote-in-transcript ≥60% and text-overlap ≥40% guards, dedupe, §17 `watch` marks, 409 on re-ingest unless `replacePending`); `store.js` += `insertPending` (no embedding), `listPending`, `liveStatements`, `supersessionCandidates`, `canSupersede`, `editPending`, `approveChunk` (edit → embed → approve in one update → supersede), `deletePending`, `countBySourceRef`, `deletePendingBySourceRef`; `api/ingest/zoom.js`, `api/chunks/pending.js` (GET/POST, trimmed shape, candidates per chunk), `api/chunks/approve.js` (approve / edit / delete, bulk ids); `scripts/zoom.mjs`, `scripts/selftest-zoom.mjs` (offline, passing; also run against the real 9/18 transcript: 240 turns → 3 windows of ~4.5K tok); `vercel.json` `api/ingest/*.js` 300s; `lib/http.js` `preflight` takes allowed methods. · Decided: embedding at approval, not at insert; speaker map is a prior and chunks under a non-mentor label are flagged for Chris rather than dropped (the 9/18 labels flip mid-turn: Chris appears under all three); tool feedback is not stored; approved chunks immutable; delete is a hard delete of pending only. 9/18 map from reading the transcript: Speaker 1 = chris, Speaker 2 = mark, Speaker 3 = unknown (mixed). · Deferred: see §17. · After the first live runs — `zoom-2` (standalone rule, coverage rule with ski vocabulary for ASR repair, tool feedback exclusive, progress/gear remarks excluded, fixed scores format); session-range tagging (`metadata.session_id`); two-pass union; score-line guard; `exclude` ranges. · **Done-when met 2026-09-19:** 9/18 Plaud transcript (240 turns, 1:06) ingested through the deployed endpoint — speaker map 1 = chris, 2 = mark, 3 = chris (Mark), `ma_7uk7lnh` tagged for 00:00–24:30 and 33:30–35:30 (the large-radius notes at 25:41 are a separate doc, not an MA History row — untagged), 51:24→end excluded (ski choice, per Mark). Two passes 36 + 34 → **37 pending** under `zoom:2026-09-18` (13 correction · 10 principle · 7 exemplar · 4 physics · 3 mental_model; 2 hedged, 3 check-speaker, 28 with supersession candidates), all listed by `/api/chunks/pending` with context, tags and verbatim quote; one item rejected by the score guard ("Describe 2"); stored scores chunk reads CE 2 · Ev 2 · Rx 3, matching the log. Default search returns 0 `chris_zoom`; `includeUnapproved` also 0 (no embedding). 190 s wall-clock.
+@@ -498,19 +522,19 @@ Recorded so they aren't re-argued.
+ - Progress tab trend analysis redesign to use exemplars and agreement data.
+ - Gates and Mike as blind scorers: same form, `author` tag differs; inter-rater data between mentors is a bonus.
+ - **Coaching from `gap_to_next`** — promoted to scope 2026-09-19: panel, try-again, and pre-exam brief are in §13 row 5; recurring gaps in row 8. Open design point for session 5: "try that line again" needs a single-line evaluate path (`/api/score/evaluate` with a `lines: [key]` filter and a shortened ladder) — a new code path, to be specced in that session's plan. Route rewrites to Chris: his reactions are correction chunks (§6.1).
+-- **Single-instance gap in the evaluate scale (two scorecards now).** One complete instance and nothing else scored 4 twice on `ma_7uk7lnh` (Evaluate: Chris 2; Equipment: Chris 3). Proposed wording: one complete instance = 3 at most ("appears, but not with consistency"); 4 requires the element to recur or be threaded through the analysis; for Equipment and Desired Performances, a recommendation or the predicted benefit of a change is not an instance — the instance is the stated effect on *this skier's observed* performance. Apply together with exemplar ingestion in session 6 so the change is tested against both Chris scorecards at once, not tuned line by line.
++- ~~**Single-instance gap in the evaluate scale (two scorecards now).**~~ (done, `v2-rag-3`, session 6 — live check pending) One complete instance and nothing else scored 4 twice on `ma_7uk7lnh` (Evaluate: Chris 2; Equipment: Chris 3). Proposed wording: one complete instance = 3 at most ("appears, but not with consistency"); 4 requires the element to recur or be threaded through the analysis; for Equipment and Desired Performances, a recommendation or the predicted benefit of a change is not an instance — the instance is the stated effect on *this skier's observed* performance. Apply together with exemplar ingestion in session 6 so the change is tested against both Chris scorecards at once, not tuned line by line.
+ - **Evaluate is unstable, not biased** (still open; Chris's definition now extracted — see the Evaluate comparison item above): −1 on 7n6ry6d, +2 on 7uk7lnh, both driven by the single boolean `comparison_to_intended_outcome.made`. Chris's verbal reasoning on the 9/18 call (session 2 will extract it) should define what he counts as the comparison — likely the task's ideal, not only the peer's stated intent.
+ - **Sparring peer said "pivot" as an intent and Chris objected on the call** — a bug report on `PEER_SYSTEM` (the peer's vocabulary should be what a certified instructor would actually say). Pick up with session 2's extraction of that passage.
+ - **Binary extraction flags are too sharp at the bottom.** On 7n6ry6d, `comparison_to_intended_outcome.made = false` and `desired_performance.stated = false` drove Evaluate and Desired Performances to 1 where Chris gave 2 ("beginning to appear"). Within-one, but the direction is informative: Chris gives partial credit where the clerk's boolean says absent. Candidate fix: a three-state field (absent / partial / made) with the partial evidence quoted. Do not tune until a second Chris scorecard confirms the pattern.
+ - **`connections[].complete` never fired** (0 on all three sessions; `how_stated` true on 1 of 21 connections). The evaluator discriminated on the partial counts, so scores were sane, but the flag carries no information yet. Revisit where Chris's line for "the how" sits once he has scored a session he considers to have one.
+ - **7n6ry6d and Ben both scored Cause/Effect 3** despite Ben's clearly stronger evidence. Coarse at the 2/3 boundary; exemplars should resolve it.
+-- **Session 6:** Chris's 7n6ry6d scorecard (posted by Mark as a structured comment line) is exemplar #1 — `result.extraction` from `/api/score` is the text half. `/api/ingest/comment.js` should split long mentor comments by paragraph the way `session4-migrate.mjs` did by hand. After a score is saved, write/refresh the `past_session` chunk (§6.7 "continuous") — `/api/score` is read-only by design.
++- ~~**Session 6:** 7n6ry6d scorecard is exemplar #1; `/api/ingest/comment.js` splits long comments by paragraph~~ (done). **Still open:** after a score is saved, write/refresh the `past_session` chunk (§6.7 "continuous"). Not built: `past_session` chunks feed nothing in scoring (never shown as examples), and it would be a 13th serverless function. If wanted, fold it into `/api/ingest/score` as `{ kind: 'past_session' }`.
+ - **Session 5:** `parseAIJson` strategy 2 (regex fallback) rebuilds `score_rationale` for the legacy six keys only; extend to the 2026 keys when the tab is built. Sheet `summary` should store the full `/api/score` result minus `debug`.
+-- **Existing `past_session` chunks are extraction v1.** Not used by the evaluator, so no re-bootstrap required; re-extract when session 6 builds exemplars so they carry `connections[]` and `equipment`.
++- **Existing `past_session` chunks are extraction v1** (exemplars are built from a fresh v3/v4 extraction — `ingest:scores --reextract` after deploying 6b puts both on v4; the remaining `past_session` chunks stay v1). Not used by the evaluator, so no re-bootstrap required; re-extract when session 6 builds exemplars so they carry `connections[]` and `equipment`.
+ - **Chris–Chris conflict detection** (§5.6 last rule) is done by the evaluator, which sees dates and reports `chris_conflicts`; the assembler can't detect contradiction without a model call. If conflicts start appearing, add a review list to session 8's approval view.
+ - **Chris slot minimum of 5** (§7.1) is met only when the scored session isn't 7n6ry6d (7 split chunks + 2 comments + assessment). `meta.context.chris_under_min` reports it. Zoom chunks fix this.
+ 
+-- **Evaluate comparison — Chris's definition is now in the store (pending):** 49:35 "provide a comparison of how they were relative to their desired outcomes, and then how does that desired outcome or their intent match to the ideal" and 42:23 "quality and accuracy… go to the component parts… compare that relative to an ideal… always in relationships between fundamentals, phase to phase." Two comparisons, not one: performance vs the peer's intent, **and** intent vs the task's ideal. Session 6: replace the boolean `comparison_to_intended_outcome.made` with `{ vs_intent, vs_ideal }` (three-state each) and test against both scorecards.
++- **Evaluate comparison — Chris's definition is now in the store (pending):** 49:35 "provide a comparison of how they were relative to their desired outcomes, and then how does that desired outcome or their intent match to the ideal" and 42:23 "quality and accuracy… go to the component parts… compare that relative to an ideal… always in relationships between fundamentals, phase to phase." Two comparisons, not one: performance vs the peer's intent, **and** intent vs the task's ideal. ~~Session 6: replace the boolean with `{ vs_intent, vs_ideal }` (three-state each)~~ (done, extract v4; live test against both scorecards pending). When Chris approves the 49:35 / 42:23 chunks, check the template's structural wording of the Evaluate unit against his; his wins.
+ - **`PEER_SYSTEM` bug confirmed by Chris (44:09):** the AI peer's answers are not what candidates would say ("pivot" as an intent; long tidy answers). Chris, 45:00: a real peer gives enough but not so much that it sinks them — "you might be more brief"; it is on the candidate to ask one targeted question. Fix with the Sparring tab's next touch (session 11 at the latest). Also from `tool_feedback`: the summary Chris saw lacked the peer-delivery text ("I only got one sentence") — check what MA History shows a mentor in session 5.
+ - **Zoom ingest ran 190 s of a 300 s limit** (6 parallel Opus calls for a 66-min call). A 90-min call may not fit: make `passes` sequential-with-budget, or split ingest into a per-window endpoint driven by the CLI.
+ - **For Chris at approval (session 8):** bracketed restorations in this batch are guesses — "integrated [terrain]", "two-level [AT-level]", the names at 15:07 (Balut / Brylie / Tom Galley) — and a few items are reworded more than "lightly" (00:00:40, 00:01:19). The pending shape returns `quote` so the UI can show what was actually heard next to the cleaned text; show it.
+@@ -526,7 +550,7 @@ Recorded so they aren't re-argued.
+ - **The blind seal guards against anchoring, not inspection.** The summary is kept out of React state for an unscored mentor, but it is still in the `/api/sheet` response. A real server-side gate needs a mentor-scoped read endpoint; pair it with the auth item above before session 8.
+ - **Try-again timing is unmeasured.** Budget: passage extract (Sonnet, ≤2.5K out) + one-line evaluate (Opus, ≤2K out) + assemble. If the first live runs exceed a minute, the lever is the evaluate output (ask for rungs 2–5 in one sentence each), not the ladder itself. When a session's extraction was shed (7uk7lnh), the first try re-extracts the whole session (~1 min, cached in localStorage afterwards); a rescore stores the extraction and removes that cost.
+ - **Try-again results are not routed to Chris** (§17 "his reactions are correction chunks"). Natural home: a "send this rewrite to Chris" button that posts the before/after to the thread. Not built — outside row 5.
+-- **Evaluator quoted the peer as Mark** in 7uk7lnh's Prescription `gap_to_next` ("Instead of 'Focus on initiating with a guided ski…'" is the peer's restatement). The panel flags it; the fix belongs in `extract` (`prescription.delivery_to_peer` should be Mark's words only) or in the evaluate rule for gap_to_next. Pick up with session 6's template change.
++- **Evaluator quoted the peer as Mark** in 7uk7lnh's Prescription `gap_to_next` ("Instead of 'Focus on initiating with a guided ski…'" is the peer's restatement). ~~The panel flags it; the fix belongs in `extract`~~ (done in both: extract v4 rule + `speakerGuard` in code; evaluate rule for `gap_to_next`). Original note: the fix belongs in `extract` (`prescription.delivery_to_peer` should be Mark's words only) or in the evaluate rule for gap_to_next. Pick up with session 6's template change.
+ - **`mergePassage` is heuristic** about which inventory items the replaced sentence produced (≥70% token overlap with the item's quote). Wrong in the conservative direction — an item that should have been removed stays, so practice scores err low, not high.
+ 
+ ## Appendix A — Glossary for the builder
+@@ -540,3 +564,11 @@ Recorded so they aren't re-argued.
+ - **Two-audience** — in the AT MA Exam, the candidate delivers to a peer (what/how, their language) and separately to the examiner (technical why). Explaining physics to the peer is coaching, not MA.
+ - **Prompted vs unprompted** — whether the candidate showed a concept in the presentation or only after examiner probing. Refinement under probing is additive; creation under probing caps at 4.
+ - **Sidecut → reverse camber → groove → steering** — the physics chain Chris keeps pushing Mark to complete unprompted.
++
++- **Vercel function count is 12** (`chunks/approve`, `chunks/pending`, `chunks/search`, `claude`, `sheet`, `score`, `score/extract`, `score/evaluate`, `ingest/zoom`, `ingest/score`, `ingest/comment`, `agreement`) — the Hobby plan's per-deployment ceiling. §10 still lists `/api/ingest/psia.js` (never built; PSIA ingest is CLI-only) and sessions 7–8 will want a mentor-scoped read endpoint. Before adding a 13th: fold `chunks/*` into one handler with an `action`, or `ingest/*` likewise — or confirm the plan is Pro.
++- **`desired_performance.stated` is still a boolean.** The three-state change was made for the comparison only (§17 said not to tune DP until a second scorecard confirmed the pattern; on 7uk7lnh DP was exact at 2). Revisit with the third scorecard.
++- **Exemplar ranking is untested at n > 3.** With two or three exemplars every eligible one is taken; same-MA-type-then-similarity ordering starts to matter around ten. Add exemplar labels to the §14 retrieval eval when there are enough to choose between.
++- **Agreement endpoint returns AI numbers and has no auth** — same trust model as the rest, same fix as the blind-seal item above; session 8 must not call it for a sealed viewer.
++- **Blind-form notes are one field.** §6.4 imagined a note per criterion; the form has one. Notes are split by paragraph and keyword-tagged to lines. If Chris's notes turn out to be line-specific, six optional note fields on the form are the cleaner source (session 8 touch).
++- **Comment `type` is a regex** (`correction` if the text reads as disagreement, else `principle`) — harvested from bootstrap, unchanged. Comments written after the reveal may discuss the AI's number; unlike Zoom `tool_feedback` they are stored. Watch for "the AI scored this too high" chunks showing up in citations; if they do, filter them at ingest the way `zoom-2` does.
++
+diff --git a/lib/coaching.js b/lib/coaching.js
+index 5230883..33bb005 100644
+--- a/lib/coaching.js
++++ b/lib/coaching.js
+@@ -4,7 +4,7 @@
+ // Everything here works on the evaluator's gap_to_next ("Instead of X, say Y, because Z"), the Step 1 extraction,
+ // and the session's sections. Nothing here scores.
+ import { SCORED_CRITERIA } from './vocab.js';
+-import { connectionStats, renderChains } from './extractStats.js';
++import { connectionStats, renderChains, comparisonFacts } from './extractStats.js';
+ 
+ const Q = `'"‘’“”`;
+ const stripQuotes = (s) => String(s || '').trim().replace(new RegExp(`^[${Q}]+|[${Q}.,;]+$`, 'g'), '').trim();
+@@ -112,7 +112,7 @@ export function lineQuotes(line, x) {
+   if (!x) return [];
+   switch (line) {
+     case 'cause_effect': return (x.connections || []).filter((c) => !c.prompted).map((c) => c.quote);
+-    case 'evaluate': return [x.comparison_to_intended_outcome?.quote, x.comparison_to_intended_outcome?.intent_referenced_quote];
++    case 'evaluate': { const c = x.comparison_to_intended_outcome || {}; return [c.vs_intent?.quote, c.vs_ideal?.quote, c.quote, c.vs_intent?.reference_quote, c.vs_ideal?.reference_quote, c.intent_referenced_quote]; }
+     case 'prescription': return [x.prescription?.delivery_to_peer];
+     case 'desired_performances': return [x.desired_performance?.quote, x.task?.quote];
+     case 'biomechanics': return [...(x.physics_concepts || []).map((p) => p.quote), ...(x.connections || []).map((c) => c.how_quote)];
+@@ -164,9 +164,11 @@ export function unitCheck(line, x) {
+     need(has(c.outcome), 'the outcome (speed, turn shape, turn size, line, ski–snow interaction)');
+     need(c.how_stated === true, 'the how — the mechanism, not just "X caused Y"');
+   } else if (line === 'evaluate') {
+-    const c = x.comparison_to_intended_outcome || {};
+-    need(has(c.intent_referenced_quote), "a reference to the intended outcome (the peer's intent or the task's ideal)");
+-    need(c.made === true, 'observed performance set against that intent in the same claim');
++    // Two comparisons (extract v4): performance vs the skier's intent, and intent/performance vs the task's ideal.
++    // Formats with no peer have no stated intent to compare against — only the ideal is asked of them.
++    const c = comparisonFacts(x.comparison_to_intended_outcome);
++    if (!x.ma_type || x.ma_type === 'at_exam') need(c.vs_intent.state === 'made', c.vs_intent.state === 'partial' ? "how the performance matched or missed the skier's intent, in the same claim" : "the observed performance set against the skier's own stated intent");
++    need(c.vs_ideal.state === 'made', c.vs_ideal.state === 'partial' ? 'what the task actually requires — say the ideal, then set the intent or the performance against it' : "the skier's intent or performance set against what this task requires when skied well");
+     need((c.outcome_dimensions || []).length > 0, 'an outcome dimension (speed, turn shape, turn size, line)');
+   } else if (line === 'prescription') {
+     const ch = x.prescription?.chain || {};
+@@ -186,6 +188,7 @@ export function unitCheck(line, x) {
+   } else if (line === 'equipment') {
+     const e = x.equipment || {};
+     need(e.addressed === true, "a statement of how equipment affects this skier's performance");
++    if (e.addressed === true && e.states_effect_on_observed_performance === false) need(false, 'the effect on what this skier DID — a recommendation or its predicted benefit is not yet an effect');
+     need(e.linked_to_biomechanics || e.linked_to_desired_performance || e.linked_to_environment, 'the link to biomechanics, the desired performance, or the snow/terrain');
+   }
+   return { complete: miss.length === 0, missing: miss };
+@@ -221,7 +224,13 @@ export function mergePassage(original, patch, { section, replacedText = null } =
+   take('task', (t) => t.described === true, (t) => t.quote);
+   take('desired_performance', (d) => d.stated === true, (d) => d.quote);
+   take('equipment', (e) => e.addressed === true, (e) => e.quote);
+-  take('comparison_to_intended_outcome', (c) => c.made === true, (c) => c.quote);
++  // Two comparisons, merged one by one: a rewrite that adds the ideal must not erase a comparison to intent made elsewhere.
++  {
++    const rank = { absent: 0, partial: 1, made: 2 };
++    const o = comparisonFacts(x.comparison_to_intended_outcome), p = comparisonFacts(patch.comparison_to_intended_outcome);
++    const pick = (k) => (rank[p[k].state] > 0 && rank[p[k].state] >= rank[o[k].state] ? { ...p[k], prompted, rewritten: true } : gone(o[k].quote) ? p[k] : o[k]);
++    x.comparison_to_intended_outcome = comparisonFacts({ vs_intent: pick('vs_intent'), vs_ideal: pick('vs_ideal'), outcome_dimensions: [...new Set([...o.outcome_dimensions, ...p.outcome_dimensions])] });
++  }
+ 
+   if (section === 'prescription_delivery' || Object.values(patch.prescription?.chain || {}).some((v) => has(v) && v !== false)) {
+     const oc = x.prescription?.chain || {}, pc = patch.prescription?.chain || {};
+diff --git a/lib/extractStats.js b/lib/extractStats.js
+index 9645a9b..e59edc5 100644
+--- a/lib/extractStats.js
++++ b/lib/extractStats.js
+@@ -29,3 +29,28 @@ export function renderChains(x) {
+   return (x.connections || []).map((c) => [c.body_movement, c.fundamental, c.linked_fundamental, c.body_consequence, c.ski_performance, c.outcome ? (c.outcome_detail || c.outcome) : null].filter(has).join(' → ')).filter((t) => t.includes('→'));
+ }
+ 
++
++/**
++ * comparison_to_intended_outcome, normalized (extract v4). Two comparisons, three states each; the rules the clerk is
++ * given are enforced here too: "made" needs the reference quoted (else it is partial, or absent with no quote at all).
++ * Writes the v3 fields (`made`, `quote`, `intent_referenced_quote`) from the two, so older readers keep working.
++ * A v3 object ({ made, quote, intent_referenced_quote }) is lifted: made → vs_intent made; vs_ideal unknown → absent.
++ */
++export function comparisonFacts(c) {
++  c = c && typeof c === 'object' ? { ...c } : {};
++  const one = (v) => {
++    v = v && typeof v === 'object' ? { ...v } : {};
++    let state = ['absent', 'partial', 'made'].includes(v.state) ? v.state : 'absent';
++    if (state === 'made' && !has(v.reference_quote)) state = has(v.quote) ? 'partial' : 'absent';
++    if (state === 'partial' && !has(v.quote) && !has(v.reference_quote)) state = 'absent';
++    return { state, reference_quote: has(v.reference_quote) ? v.reference_quote : null, quote: has(v.quote) ? v.quote : null, prompted: v.prompted === true };
++  };
++  if (!c.vs_intent && !c.vs_ideal && 'made' in c) c.vs_intent = { state: c.made && has(c.intent_referenced_quote) ? 'made' : 'absent', reference_quote: c.intent_referenced_quote, quote: c.quote };
++  const vi = one(c.vs_intent), vd = one(c.vs_ideal);
++  const lead = vi.state === 'made' ? vi : vd.state === 'made' ? vd : vi.state === 'partial' ? vi : vd;
++  return {
++    vs_intent: vi, vs_ideal: vd, outcome_dimensions: Array.isArray(c.outcome_dimensions) ? c.outcome_dimensions : [],
++    made: vi.state === 'made' || vd.state === 'made', both_made: vi.state === 'made' && vd.state === 'made',
++    quote: lead.quote, intent_referenced_quote: lead.reference_quote,
++  };
++}
+diff --git a/lib/prompts/evaluate.js b/lib/prompts/evaluate.js
+index 1ac7ab1..80dced4 100644
+--- a/lib/prompts/evaluate.js
++++ b/lib/prompts/evaluate.js
+@@ -14,11 +14,21 @@ import { SCORED, SCORED_CRITERIA, LEGACY_CRITERIA, CRITERION_LABEL, SKILLS, PHAS
+ // and null outcome "complete", and related Mark's observation to the peer's intent when Mark never had.
+ // Changes: the ladder is climbed from the bottom and every rung is written; each line has a defined UNIT of
+ // evidence and the scale counts complete units (connection_stats is computed in code); the AT bar is stated.
+-export const EVALUATE_VERSION = 'v2-rag-2';
++// v2-rag-3 (2026-09-19, session 6 — applied together with exemplar ingestion, tested against both Chris scorecards):
++//   - Single-instance gap: on 7uk7lnh "complete: 1 · partial: 0" scored 4 twice (Evaluate: Chris 2; Equipment: Chris 3).
++//     The scale had no rung for one complete instance and nothing else, and the evaluator resolved it upward. Now one
++//     complete instance standing alone is a 3 at most; 4 needs recurrence, or — for a line that is naturally said once —
++//     an instance threaded into the rest of the analysis.
++//   - Evaluate's unit is two comparisons (extract v4: vs_intent, vs_ideal, three-state). Structure only; Chris's own
++//     wording of it is in the store (pending his approval) and, once approved, arrives by retrieval and outranks this.
++//   - Equipment: a recommendation or the predicted benefit of a change is not an instance.
++//   - gap_to_next quotes Mark only (7uk7lnh's Prescription gap quoted the peer's restatement as his).
++//   - exemplar_anchor: when exemplars are in the context the evaluator must place each line against one, in writing.
++export const EVALUATE_VERSION = 'v2-rag-3';
+ 
+ export const EVALUATE_SYSTEM = `You are scoring a PSIA-RM Alpine Trainer (AT) Movement Analysis session the way Chris, the AT Assessor, would score it on the 2026 AT MA/TU Assessment Form. The candidate is Mark, a Level 3 instructor working toward AT. AT candidates train instructors; the bar is above Level 3.
+ 
+-You are given, in order: the form's scale and six criterion definitions; statements by Chris; sessions Chris scored (exemplars, when any exist); PSIA reference; and a SESSION EXTRACTION — a neutral inventory of what Mark actually said. You have not seen the transcript and do not need it. The extraction is the only evidence of Mark's performance. In the extraction, null, false, or an empty list means Mark did not say it. Do not fill those in for him, and do not credit what a competent candidate would have meant.
++You are given, in order: the form's scale and six definitions; statements by Chris; sessions Chris scored (exemplars); PSIA reference; and a SESSION EXTRACTION — a neutral inventory of what Mark actually said. The extraction is the only evidence of Mark's performance. In the extraction, null, false, or an empty list means Mark did not say it. Do not fill those in, or credit what a competent candidate would have meant.
+ 
+ Vocabulary is shared with the extraction: skills = ${SKILLS.join(', ')}; phases = ${PHASES.join(', ')}; outcome dimensions = ${OUTCOMES.join(', ')}.
+ 
+@@ -28,26 +38,26 @@ Technical Understanding: ${SCORED.tu.map((k) => `${k} (${CRITERION_LABEL[k]})`).
+ Pass = MA section average ≥ 4 AND TU section average ≥ 4. Averages are computed for you afterward; score each line on its own evidence and do not steer toward or away from a pass.
+ 
+ THE BAR
+-4 means an AT assessor would pass this line in an AT exam. This is not the Level 3 form. Mark holds Level 3; competent, accurate Level 3 movement analysis is the starting point here, not a 3 or a 4. Chris has scored a session of accurate, reasonably organized L3-grade analysis at 2 on every addressed line, because the AT elements were only beginning to appear. When Chris-scored exemplars are in the context, they define the levels and override this paragraph.
++4 means an AT assessor would pass this line in an AT exam. This is not the Level 3 form. Mark holds Level 3; competent, accurate Level 3 movement analysis is the starting point here, not a 3 or a 4. Chris has scored accurate, organized L3-grade analysis at 2 on every addressed line: the AT elements were only beginning to appear. When Chris-scored exemplars are in the context, they define the levels and override this paragraph.
+ 
+ THE UNIT — what counts as one instance of each line's essential element
+ - cause_effect: a COMPLETE connection — body movement and/or fundamental → ski performance (what the ski does on the snow) → outcome (${OUTCOMES.join(', ')}) — with the mechanism stated (how_stated), relevant to the desired outcome, and prioritized. connection_stats counts these for you; connections[].complete marks them. A chain that ends in a body state, or that asserts "X caused Y" without the how, is a partial instance. Fundamental-to-fundamental relationships count when the effect of one on the other is explained.
+-- evaluate: an explicit comparison of observed performance against the intended specific outcome — the described task and/or the skier's stated intent — in terms of an outcome dimension. comparison_to_intended_outcome.made and task.described tell you whether Mark did this. An accurate description of what was observed is not a comparison.
++- evaluate: TWO comparisons, each in terms of an outcome dimension: (a) the observed performance against the skier's own stated intent, and (b) that intent and/or the performance against what the task requires when skied well. comparison_to_intended_outcome.vs_intent and .vs_ideal record each as absent | partial | made; task.described says whether he stated what the task requires. A complete instance is both made (both_made). One made and the other partial or absent is a partial instance. Where the format has no peer, (b) alone is the unit. An accurate description of what was observed is not a comparison.
+ - prescription: a change chain — skier input → fundamental → effect on other fundamental(s) → ski performance → outcome on the task just observed — delivered at peer level as a brief coaching cue. Judge the chain by whether the links explain each other, not by whether the slots are filled.
+ - desired_performances: a description of what this task looks like skied well, with multiple fundamentals in blended relationship (desired_performance.stated). The predicted benefit of the prescription is not a description of ideal performance.
+ - biomechanics: a physics or biomechanics principle accurately applied to explain the observed performance and/or efficient skiing in general. Implied-but-accurate mechanism counts; vocabulary alone does not.
+-- equipment: a statement of how equipment affects this skier's performance toward the outcome, or interacts with the environment.
++- equipment: a statement of how equipment affected THIS skier's observed performance toward the outcome, or interacts with the environment (equipment.states_effect_on_observed_performance). A recommendation, or the predicted benefit of a change, is not an instance — partial at most.
+ 
+ HOW THE SCALE COUNTS UNITS (unprompted first; prompted refinement adds, prompted creation caps the element at 4)
+-1 = no instance, complete or partial. 2 = partial instances only, or a single complete one among partials — beginning to appear. 3 = complete instances present but inconsistent — some claims complete, others left partial, or complete only under probing. 4 = complete instances are the norm across the analysis, accurate and specific to this skier, task, and phase. 5 = that, plus prioritization, economy, and depth beyond what the exam requires. 6 = continuous and superior.
++1 = no instance, complete or partial. 2 = partial instances only, or a single complete one among several partials — beginning to appear. 3 = appears, but not with consistency — some claims complete and others left partial, or complete only under probing. ONE complete instance and nothing else is a 3 at most, however clean it is. 4 = complete instances are the norm: the element recurs across the analysis, or — on a line that is naturally said once (the evaluate comparison, the prescription, desired performances, equipment) — the one instance is complete in every link AND threaded into the rest of the analysis (the cause it follows from, the outcome it returns to); accurate and specific to this skier, task, and phase. 5 = that, plus prioritization, economy, and depth beyond what the exam requires. 6 = continuous and superior.
+ 
+ PROCEDURE — for each of the six lines, climb from the bottom. Do not start from a number and confirm it.
+ 1. State the evidence count: which extraction items are complete instances of this line's unit, which are partial, which are absent. Use the extraction's own fields and numbers. Use only relationships Mark made; never relate two extraction items yourself (for example, do not set his observation against the peer's intent if he did not).
+ 2. Write the case for 2, then 3, then 4, then 5 — every rung, one or two sentences each, as an examiner would defend it for THIS session. A rung with no honest case says why in a few words ("No case: zero complete connections"). "No case needed" is never an acceptable entry. If even the case for 2 fails, write the case for 1.
+-3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not.
++3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not. When exemplars are in the context, check the rung against them before settling: in exemplar_anchor name the exemplar line closest in evidence, Chris's number for it, and whether this session's evidence is weaker, equal, or stronger and in what. A score more than one away from the closest exemplar line needs a named difference in evidence.
+ 4. A fault Chris has named (in any Chris statement in the context) applies at every rung, not only as a ceiling on 5.
+ 5. Cite the chunks that informed the decision as "c:xxxxxxxx" ids, exactly as they appear in the context. Cite Chris first where he speaks to the line. Never cite an id that is not in the context.
+-6. gap_to_next: one concrete move from this level to the next, in the form "Instead of X, say Y, because Z", using Mark's own material from the extraction.
++6. gap_to_next: one concrete move from this level to the next, in the form "Instead of X, say Y, because Z". X is something MARK said — never peer_restated, peer_answers, or an examiner's question. If he said nothing on the line, X is "leaving <the element> unsaid".
+ 
+ STANDING RULES — guard against scoring too low
+ - Criteria are evidence descriptors, not checklists. Depth of work determines the level, not whether every term appears.
+@@ -56,17 +66,17 @@ STANDING RULES — guard against scoring too low
+ - Prompted refinement (Mark showed it, the examiner deepened it) is additive. Prompted creation (the examiner had to surface it) caps that element at 4.
+ - Fitts & Posner as Chris uses it: does it appear? is it consistent? 4 = appears regularly.
+ - Implied physics through an accurate description of the mechanism counts as demonstrated.
+-- Concise, precise, expert-to-expert delivery rates higher than verbose coverage. Phase-by-phase is one way to be clear, not a requirement. A single primary fundamental is not required; blended fundamentals are legitimate.
++- Concise, precise, expert-to-expert delivery rates higher than verbose coverage. Phase-by-phase is optional. A single primary fundamental is not required; blended fundamentals are legitimate.
+ - Metacognition need not be stated; the behavior is the evidence.
+ - Cognitive-level check: Apply ≈ 3, Analyze ≈ 4, Evaluate/Create ≈ 5. If the cognitive level contradicts the score, the cognitive level wins.
+ 
+ STANDING RULES — guard against scoring too high
+-- Naming is not connecting. Mentioning fundamentals, skills, or body movements without a stated connection to a change in ski performance and to an outcome (${OUTCOMES.join(', ')}) is not cause-and-effect evidence. Count connections where the links are actually present in the extraction (connections[] with non-null links, how_stated true), not the number of fundamentals mentioned.
+-- A line that is not addressed scores 1. If equipment.addressed is false, Equipment is 1; general ski vocabulary is not equipment analysis. The same logic applies to any line whose essential element is absent from the extraction.
+-- "Beginning to appear" is a 2, not a 3. A 3 requires the essential elements to be present and correct at least some of the time. One partial instance is a 2.
++- Naming is not connecting. Mentioning fundamentals, skills, or body movements without a stated connection to a change in ski performance and to an outcome (${OUTCOMES.join(', ')}) is not cause-and-effect evidence. Count connections[] whose links are present, not fundamentals mentioned.
++- A line that is not addressed scores 1. If equipment.addressed is false, Equipment is 1; general ski vocabulary is not equipment analysis. Likewise any line whose essential element is absent.
++- "Beginning to appear" is a 2, not a 3. One partial instance is a 2.
+ - Accurate but generic is Level 3 work. AT-level requires prioritization and specificity to this skier, this task, this phase.
+-- Volume is not depth. Do not raise a score because the extraction or the delivery is long.
+-- Each definition names its essential elements (e.g. Evaluate: comparison to the intended specific outcome; Prescription: peer-level change that affects a named outcome). Score against those elements, not against general competence.
++- Volume is not depth.
++- Each definition names its essential elements. Score against those, not against general competence.
+ 
+ TYPE AWARENESS
+ ma_type at_exam has two audiences (peer: what/how in plain language; examiner: technical why). Every other type has one audience, the examiner: never penalize missing peer dialog, peer delivery, or intent verification where the format has no peer. Private notes are observation only.
+@@ -85,6 +95,7 @@ OUTPUT — return ONLY this JSON object, no prose, no code fences:
+   "justifications": { "<each of the six scored lines>": { "2": "...", "3": "...", "4": "...", "5": "...", "1": "only if the case for 2 fails" } },
+   "citations": { "<each of the six scored lines>": ["c:xxxxxxxx"] },
+   "gap_to_next": { "<each of the six scored lines>": "Instead of X, say Y, because Z" },
++  "exemplar_anchor": { "<each of the six scored lines>": "c:xxxxxxxx <line>: Chris N — this session weaker | equal | stronger because … (omit when the context has no exemplars)" },
+   "did_well": ["2–4 items, specific, quoting Mark where possible"],
+   "opportunity": ["2–4 items, highest leverage first"],
+   "key_learning": "the single most important thing for Mark to take from this session, in Chris's frame where he has supplied one",
+@@ -103,5 +114,5 @@ export function buildEvaluateUser(context) {
+  * previous score, or which part of the extraction was rewritten: it scores the line cold.
+  */
+ export function buildEvaluateLineUser(context, line) {
+-  return `${context}\n\n\nScore ONE line only: ${line} (${CRITERION_LABEL[line]}). Follow the full procedure for that line — evidence count, every rung of the ladder, rationale, citations, gap_to_next. Return ONLY the JSON object, with "${line}" as the single key inside scores, score_rationale, evidence_count, justifications, citations and gap_to_next. Omit the legacy diagnostics, did_well, opportunity, key_learning and time_note.`;
++  return `${context}\n\n\nScore ONE line only: ${line} (${CRITERION_LABEL[line]}). Follow the full procedure for that line — evidence count, every rung of the ladder, rationale, citations, gap_to_next, exemplar_anchor. Return ONLY the JSON object, with "${line}" as the single key inside scores, score_rationale, evidence_count, justifications, citations, gap_to_next and exemplar_anchor. Omit the legacy diagnostics, did_well, opportunity, key_learning and time_note.`;
+ }
+diff --git a/lib/prompts/extract.js b/lib/prompts/extract.js
+index 6078e98..d4cf257 100644
+--- a/lib/prompts/extract.js
++++ b/lib/prompts/extract.js
+@@ -12,14 +12,24 @@
+ //   - `extractionToText` leads with substance; tag boilerplate moved to the end (§17 similarity-band item).
+ import { MODELS, completeJson } from '../llm.js';
+ import { SKILLS, PHASES, OUTCOMES, MA_TYPES } from '../vocab.js';
+-import { has, connectionStats, renderChains } from '../extractStats.js';
++import { has, connectionStats, renderChains, comparisonFacts } from '../extractStats.js';
++import { findOriginal } from '../coaching.js';
+ 
+ // v3 (2026-09-17, after the first live run on 7n6ry6d scored +2 on four lines): the v2 clerk was still generous.
+ //   It marked "X was caused by Y" as how_stated, put body consequences in the outcome slot, recorded the predicted
+ //   benefit of the fix as the desired performance of the task, and called a description of the observed turn a
+ //   "comparison to intended outcome". Each of those is now defined by what it is NOT. cause_effect_chain is no
+ //   longer asked of the model (it invited stitching); it is rendered in code from connections[].
+-export const EXTRACT_VERSION = 3;
++// v4 (2026-09-19, session 6 — two Chris scorecards): three fields changed, each because a scorecard showed the old one wrong.
++//   - comparison_to_intended_outcome was one boolean and drove Evaluate −1 on 7n6ry6d and +2 on 7uk7lnh. It is now two
++//     comparisons — observed performance vs the skier's intent, and intent/performance vs the task's ideal — each
++//     absent | partial | made, with the evidence quoted. `made`, `quote`, `intent_referenced_quote` are still written
++//     (computed in code from the two) so older readers keep working.
++//   - equipment gains `states_effect_on_observed_performance`: on 7uk7lnh a recommendation plus its predicted benefit
++//     was inventoried as "addressed" and scored 4; Chris gave 3 — "it was a recommendation".
++//   - prescription.delivery_to_peer is Mark's words only. On 7uk7lnh the peer's restatement landed there and the
++//     evaluator coached Mark on a sentence he never said. Also checked in code against who actually spoke.
++export const EXTRACT_VERSION = 4;
+ 
+ export const EXTRACT_SYSTEM = `You are an inventory clerk for PSIA Alpine Trainer Movement Analysis (MA) practice sessions.
+ You read a session transcript and produce a structured JSON inventory of what the candidate (Mark) actually said and did.
+@@ -47,13 +57,17 @@ Normalization rules:
+ Field guidance:
+ - task: the task/activity the observed skier was skiing. "described" is true only if Mark said what that task requires or looks like when skied well (not merely named it).
+ - desired_performance: Mark's description of what THIS TASK looks like when skied well — what the task requires of the skis and the body (e.g. "dynamic parallel in variable snow requires …"). It is NOT the predicted benefit of his prescription ("if she did X she would be able to Y" belongs in prescription.chain), and it is NOT the peer's stated goal. "stated" is false if he only named the task. "fundamentals_blended" lists fundamentals he explicitly described working TOGETHER in that ideal.
+-- comparison_to_intended_outcome: "made" is true only if Mark explicitly referred to the intended outcome (the peer's stated intent, or the task's requirement) AND set the observed performance against it in the same claim. Describing what he observed — however precisely — is an observation, not a comparison. "intent_referenced_quote" must contain his reference to the intent; null means not made.
+-- equipment: any statement about how skis/boots/bindings/tune/sidecut/length/width affect this skier's performance or interact with snow/terrain. Naming "the ski" as the object that turns is not equipment. "addressed" false means he said nothing of the kind.
++- comparison_to_intended_outcome: two separate comparisons. Describing what he observed — however precisely — is an observation, not a comparison, and is "absent" in both.
++  · vs_intent: Mark sets the OBSERVED PERFORMANCE against THE SKIER'S OWN STATED INTENT. "made" = he refers to that intent AND says, in the same claim, how the performance matched or missed it in terms of an outcome dimension. "partial" = he refers to the intent but the match/miss is vague, has no outcome dimension, or sits in a different sentence he never joined to it. "absent" = he never refers to the skier's intent. reference_quote holds his words referring to the intent; quote holds the comparison.
++  · vs_ideal: Mark sets the skier's intent and/or performance against WHAT THE TASK REQUIRES when skied well. "made" = he states that requirement AND says how the intent or the performance sits relative to it. "partial" = he gestures at a standard ("should be rounder", "not what we want in bumps") without saying what the task requires, or states the requirement without setting anything against it. "absent" = no reference to the task's ideal. reference_quote holds his words stating the ideal.
++  · prompted is true when the comparison first appears in Examiner Q&A.
++- equipment: any statement about how skis/boots/bindings/tune/sidecut/length/width affect this skier's performance or interact with snow/terrain. Naming "the ski" as the object that turns is not equipment. "addressed" false means he said nothing of the kind. states_effect_on_observed_performance is true only if he said how the equipment affected what THIS skier's skis or body did in the runs observed. A recommendation ("a softer ski would…"), or the benefit he predicts from a change, is not an effect on observed performance: false. Private notes do not count — they were never spoken.
+ - connections: one record per causal claim Mark made. Slots: body_movement → fundamental → linked_fundamental → body_consequence → ski_performance → outcome.
+   · ski_performance is what the SKI does on/in the snow (tips, tails, edge angle, bend, grip, skid, pivot, path). What the skier's body does is never ski performance.
+   · body_consequence is a resulting body state (weight moves inside, back seat, has to recenter). It is NOT an outcome.
+   · outcome is only one of: ${OUTCOMES.join(', ')}. outcome_detail is null whenever outcome is null.
+   · how_stated is true only if Mark gave the MECHANISM — the physical or biomechanical reason one link produces the next (e.g. "because the femur can no longer turn in the hip socket, the edge angle is set by the whole body tipping in, so…"). "X was caused by Y", "which led to", "leaving her…", "this required…" assert THAT it happens, not HOW: how_stated = false. When true, how_quote carries the mechanism words.
++- prescription.delivery_to_peer and rationale_to_examiner: MARK'S WORDS ONLY. The peer's restatement of the prescription goes in peer_restated and nowhere else. Never place the peer's or the examiner's words in any field that records what Mark said.
+ - prescription.chain: for the prescribed change, which of these Mark stated: the input asked of the skier, the fundamental it changes, the other fundamental(s) that change as a result, the resulting ski performance, the resulting outcome relative to the task.
+ - verbatim_key_phrases: 5–12 short exact quotes that best capture the diagnosis, connections, and prescription. Used for retrieval; pick substance over filler.
+ 
+@@ -73,10 +87,14 @@ export const EXTRACT_SCHEMA = `{
+   }],
+   "primary_fundamental_named": "... | null",
+   "physics_concepts": [{ "concept": "...", "explicit_or_implied": "explicit | implied", "applied_to": "observed_skier | general_mechanics | both", "prompted": false, "quote": "..." }],
+-  "equipment": { "addressed": false, "prompted": false, "quote": "... | null", "linked_to_biomechanics": false, "linked_to_desired_performance": false, "linked_to_environment": false },
++  "equipment": { "addressed": false, "prompted": false, "quote": "... | null", "states_effect_on_observed_performance": false, "linked_to_biomechanics": false, "linked_to_desired_performance": false, "linked_to_environment": false },
+   "intent_verification": { "asked": true, "questions": ["..."], "peer_answers": ["..."] },
+   "conditions_considered": "... | null",
+-  "comparison_to_intended_outcome": { "made": false, "intent_referenced_quote": "... | null", "outcome_dimensions": ["speed"], "quote": "... | null" },
++  "comparison_to_intended_outcome": {
++    "vs_intent": { "state": "absent | partial | made", "reference_quote": "... | null", "quote": "... | null", "prompted": false },
++    "vs_ideal": { "state": "absent | partial | made", "reference_quote": "... | null", "quote": "... | null", "prompted": false },
++    "outcome_dimensions": ["speed"]
++  },
+   "prescription": {
+     "task": "...", "rationale_to_examiner": "...", "delivery_to_peer": "...", "peer_restated": "quote | null",
+     "chain": { "skier_input": "... | null", "fundamental_changed": "... | null", "other_fundamentals_affected": "... | null", "ski_performance_change": "... | null", "outcome_change": "... | null", "tied_to_observed_task": false }
+@@ -146,6 +164,25 @@ export function deliveryStats(session) {
+ // Deterministic facts live in ../extractStats.js (pure, no SDK import) so the browser bundle can share them.
+ export { connectionStats, renderChains };
+ 
++/**
++ * Who actually said it? The clerk is told delivery_to_peer is Mark's words only; this checks it against the session's
++ * speaker labels. If the closest utterance is someone else's, the text moves to peer_restated (when that is empty) and
++ * the field is cleared — the evaluator must not score, or coach, a sentence Mark never said. Returns the guards fired.
++ */
++export function speakerGuard(x, session) {
++  const fired = [];
++  const p = x.prescription;
++  if (p && has(p.delivery_to_peer) && (Object.keys(session?.sections || {}).length || session?.transcript)) {
++    const hit = findOriginal({ instead: p.delivery_to_peer, quoted: true }, session);
++    if (hit.kind === 'quote' && hit.speaker && hit.speaker !== 'Mark') {
++      fired.push(`prescription.delivery_to_peer was ${hit.speaker}'s words ("${String(p.delivery_to_peer).slice(0, 60)}…") — cleared`);
++      if (!has(p.peer_restated)) p.peer_restated = p.delivery_to_peer;
++      p.delivery_to_peer = null;
++    }
++  }
++  return fired;
++}
++
+ /** Run Step 1 on a session. Returns the §8.1 JSON object (+ delivery_stats, extract_version). */
+ export async function extractSession(session) {
+   const user = `${buildExtractInput(session)}\n\nProduce the inventory using exactly this schema:\n${EXTRACT_SCHEMA}`;
+@@ -153,7 +190,8 @@ export async function extractSession(session) {
+   out.ma_type = normalizeMaType(out.ma_type || session.type);
+   out.connection_stats = connectionStats(out);
+   out.cause_effect_chain = renderChains(out);
+-  if (out.comparison_to_intended_outcome?.made && !has(out.comparison_to_intended_outcome.intent_referenced_quote)) out.comparison_to_intended_outcome.made = false;
++  out.comparison_to_intended_outcome = comparisonFacts(out.comparison_to_intended_outcome);
++  out.extraction_guards = speakerGuard(out, session);
+   out.delivery_stats = deliveryStats(session);
+   out.extract_version = EXTRACT_VERSION;
+   return out;
+@@ -179,7 +217,7 @@ export async function extractPassage({ session, section, passage, reference = {}
+   ].join('\n');
+   const out = await completeJson({ model: MODELS.sonnet, system: EXTRACT_SYSTEM, user, maxTokens: 2500 });
+   out.connection_stats = connectionStats(out);
+-  if (out.comparison_to_intended_outcome?.made && !has(out.comparison_to_intended_outcome.intent_referenced_quote)) out.comparison_to_intended_outcome.made = false;
++  out.comparison_to_intended_outcome = comparisonFacts(out.comparison_to_intended_outcome);
+   out.extract_version = EXTRACT_VERSION;
+   return out;
+ }
+@@ -203,6 +241,7 @@ export function extractionToText(x) {
+   for (const p of x.physics_concepts || []) L.push(`Physics (${p.explicit_or_implied}): ${p.concept} — "${p.quote}"`);
+   if (x.desired_performance?.stated) L.push(`Desired performance: ${x.desired_performance.quote || ''}`);
+   if (x.equipment?.addressed) L.push(`Equipment: ${x.equipment.quote || ''}`);
++  for (const k of ['vs_intent', 'vs_ideal']) { const c = x.comparison_to_intended_outcome?.[k]; if (c && c.state !== 'absent' && c.quote) L.push(`Comparison (${k === 'vs_intent' ? "skier's intent" : "task's ideal"}): ${c.quote}`); }
+   if (x.intent_verification?.asked) L.push(`Intent verification: ${(x.intent_verification.questions || []).join(' / ')} → ${(x.intent_verification.peer_answers || []).join(' / ')}`);
+   if (x.conditions_considered) L.push(`Conditions: ${x.conditions_considered}`);
+   if (x.prescription?.task) L.push(`Prescription: ${x.prescription.task}. To examiner: ${x.prescription.rationale_to_examiner || '-'}. To peer: ${x.prescription.delivery_to_peer || '-'}`);
+diff --git a/lib/score.js b/lib/score.js
+index 03a3a6b..4225328 100644
+--- a/lib/score.js
++++ b/lib/score.js
+@@ -40,6 +40,7 @@ export function normalizeResult(raw, { extraction, chunkIndex }) {
+   out.justifications = raw.justifications || {};
+   out.evidence_count = raw.evidence_count || {};
+   out.gap_to_next = raw.gap_to_next || {};
++  out.exemplar_anchor = raw.exemplar_anchor && typeof raw.exemplar_anchor === 'object' ? raw.exemplar_anchor : {};
+   out.did_well = Array.isArray(raw.did_well) ? raw.did_well : [];
+   out.opportunity = Array.isArray(raw.opportunity) ? raw.opportunity : [];
+   out.key_learning = raw.key_learning || '';
+@@ -64,7 +65,11 @@ export function normalizeResult(raw, { extraction, chunkIndex }) {
+   const uncited = SCORED_CRITERIA.filter((k) => !out.citations[k].length);
+   // The ladder must actually be climbed: every scored line needs rungs 2–4 written, and none may be waved off.
+   const skipped = SCORED_CRITERIA.filter((k) => { const j = out.justifications[k] || {}; return ['2', '3', '4'].some((l) => !j[l] || /no case needed/i.test(j[l])); });
+-  out.quality = { citations_invalid: invalid, criteria_without_citation: uncited, ladder_skipped: skipped, guards_applied: guards };
++  // §13 row 6 done-when, checkable on every result: were Chris-scored exemplars in the context, and did the evaluator cite one?
++  const exIn = Object.entries(chunkIndex).filter(([, c]) => c.slot === 'exemplars').map(([id]) => `c:${id}`);
++  const exCited = exIn.filter((c) => used.has(c.slice(2)));
++  out.quality = { citations_invalid: invalid, criteria_without_citation: uncited, ladder_skipped: skipped, guards_applied: guards, exemplars_in_context: exIn, exemplars_cited: exCited, exemplar_lines_anchored: SCORED_CRITERIA.filter((k) => out.exemplar_anchor[k]).length };
++  if (extraction?.extraction_guards?.length) out.quality.extraction_guards = extraction.extraction_guards;
+   return out;
+ }
+ 
+@@ -113,7 +118,7 @@ export function normalizeLine(raw, { line, extraction, chunkIndex }) {
+   return {
+     line, score,
+     score_rationale: raw.score_rationale?.[line] || '', evidence_count: raw.evidence_count?.[line] || '',
+-    justifications: j, gap_to_next: raw.gap_to_next?.[line] || '',
++    justifications: j, gap_to_next: raw.gap_to_next?.[line] || '', exemplar_anchor: raw.exemplar_anchor?.[line] || '',
+     citations: ok.map((id) => `c:${id}`),
+     citation_details: Object.fromEntries(ok.map((id) => { const c = chunkIndex[id]; return [`c:${id}`, { author: c.author, source: c.source, date: c.date, type: c.type, source_ref: c.source_ref, title: c.title, text: c.text.length > 400 ? `${c.text.slice(0, 400)}…` : c.text }]; })),
+     quality: { citations_invalid: ids.length - ok.length, ladder_skipped: ['2', '3', '4'].some((l) => !j[l] || /no case needed/i.test(j[l])), guards_applied: guards },
+diff --git a/scripts/score.mjs b/scripts/score.mjs
+index 491ae83..1d702f7 100644
+--- a/scripts/score.mjs
++++ b/scripts/score.mjs
+@@ -39,6 +39,8 @@ for (const id of ids) {
+   const m = r.meta.context;
+   const exCited = Object.entries(r.citation_details).filter(([, d]) => d.type === 'exemplar').map(([c]) => c);
+   console.log(`  context ${m.tokens.total} tok · chris ${m.counts.chris} · exemplars ${m.counts.exemplars}${m.exemplar_sessions?.length ? ` (${m.exemplar_sessions.join(', ')})` : ''} · exemplar cited: ${exCited.length ? exCited.join(' ') : 'NO'} · psia ${m.counts.psia} · ${Math.round(r.meta.ms.total / 1000)}s`);
++  const cmp = r.extraction.comparison_to_intended_outcome; if (cmp?.vs_intent) console.log(`  evaluate evidence: vs intent ${cmp.vs_intent.state} · vs ideal ${cmp.vs_ideal.state} · equipment effect on observed: ${r.extraction.equipment?.addressed ? !!r.extraction.equipment.states_effect_on_observed_performance : 'n/a'}`);
++  if (r.quality.extraction_guards?.length) console.log(`  extraction guards: ${r.quality.extraction_guards.join(' | ')}`);
+   const cs = r.extraction.connection_stats; if (cs) console.log(`  connections ${cs.total} · complete ${cs.complete} · ski-perf ${cs.with_ski_performance} · outcome ${cs.with_outcome} · how ${cs.with_how}`);
+   if (r.quality.ladder_skipped?.length) console.log(`  LADDER SKIPPED on: ${r.quality.ladder_skipped.join(', ')}`);
+   if (r.quality.guards_applied.length) console.log(`  guards: ${r.quality.guards_applied.join(' | ')}`);
+diff --git a/scripts/selftest-history.mjs b/scripts/selftest-history.mjs
+index c5f00d2..1d23a7a 100644
+--- a/scripts/selftest-history.mjs
++++ b/scripts/selftest-history.mjs
+@@ -89,7 +89,11 @@ const py = { connections: [conn({ outcome: null, how_stated: false })] }; CO.mer
+ assert.deepEqual(CO.unitCheck('cause_effect', py).missing.length, 2);
+ assert.equal(CO.unitCheck('equipment', { equipment: { addressed: true } }).complete, false, 'a recommendation with no stated effect is not a unit (§17, Chris 9/18)');
+ assert.equal(CO.unitCheck('equipment', { equipment: { addressed: true, linked_to_biomechanics: true } }).complete, true);
+-assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { made: true, intent_referenced_quote: 'you wanted', outcome_dimensions: ['speed'] } }).complete, true);
++assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { made: true, intent_referenced_quote: 'you wanted', outcome_dimensions: ['speed'] } }).complete, false, 'v3-shaped comparison: intent only — the ideal is still missing');
++assert.equal(CO.unitCheck('evaluate', { ma_type: 'at_exam', comparison_to_intended_outcome: { vs_intent: { state: 'made', reference_quote: 'you wanted', quote: 'q' }, vs_ideal: { state: 'made', reference_quote: 'bumps ask for', quote: 'q2' }, outcome_dimensions: ['speed'] } }).complete, true);
++assert.equal(CO.unitCheck('evaluate', { ma_type: 'written', comparison_to_intended_outcome: { vs_ideal: { state: 'made', reference_quote: 'the task asks for', quote: 'q2' }, outcome_dimensions: ['line'] } }).complete, true, 'no peer → no intent to compare against');
++assert.equal(CO.unitCheck('evaluate', { comparison_to_intended_outcome: { vs_intent: { state: 'made', quote: 'q' }, outcome_dimensions: ['speed'] } }).missing.length, 2, '"made" without the reference quoted is demoted in code');
++assert.match(CO.unitCheck('equipment', { equipment: { addressed: true, states_effect_on_observed_performance: false, linked_to_environment: true } }).missing[0], /recommendation/);
+ // merge: the replaced sentence's items go, the passage's arrive, stats recomputed, original untouched
+ const orig = { connections: [conn({ quote: 'which caused the ski to begin to rapidly pivot to an edge', how_stated: false, how_quote: null }), conn({ quote: 'the ankles had a higher rate of flexion', how_stated: false, how_quote: null })], equipment: { addressed: false }, skills_referenced: ['rotary'] };
+ const merged = CO.mergePassage(orig, { connections: [conn({ quote: 'new' })], equipment: { addressed: false }, skills_referenced: ['edging'] }, { section: 'presentation', replacedText: 'It was whole-body rotation, which caused the ski to begin to rapidly pivot to an edge.' });
+diff --git a/scripts/selftest-score.mjs b/scripts/selftest-score.mjs
+index a4a8c75..ec8468f 100644
+--- a/scripts/selftest-score.mjs
++++ b/scripts/selftest-score.mjs
+@@ -56,4 +56,24 @@ assert.throws(() => normalizeResult({ scores: { cause_effect: 3 } }, { extractio
+ assert.deepEqual(n.quality.ladder_skipped.length, 6, 'missing ladder rungs are flagged');
+ const stored = parseSummary(JSON.stringify(JSON.stringify(n)));
+ assert.ok(hasFullScores(stored), 'legacy hasFullScores passes'); assert.equal(stored.key_learning, 'k');
++
++// ── session 6: extract v4 facts, speaker guard, exemplar bookkeeping ──
++const { comparisonFacts } = await import('../lib/extractStats.js');
++const { speakerGuard, EXTRACT_VERSION, EXTRACT_SCHEMA } = await import('../lib/prompts/extract.js');
++assert.equal(EXTRACT_VERSION, 4); assert.ok(EXTRACT_SCHEMA.includes('vs_ideal') && EXTRACT_SCHEMA.includes('states_effect_on_observed_performance'));
++const cf = comparisonFacts({ vs_intent: { state: 'made', reference_quote: 'you wanted a guided ski', quote: 'you wanted guided; the top was pivoted' }, vs_ideal: { state: 'made', quote: 'should be rounder' }, outcome_dimensions: ['turn_shape'] });
++assert.equal(cf.vs_intent.state, 'made'); assert.equal(cf.vs_ideal.state, 'partial', '"made" without the ideal quoted is partial'); assert.equal(cf.made, true); assert.equal(cf.both_made, false);
++assert.equal(cf.intent_referenced_quote, 'you wanted a guided ski', 'v3 fields still written');
++assert.equal(comparisonFacts({ made: true, intent_referenced_quote: 'r', quote: 'q' }).vs_intent.state, 'made', 'a stored v3 comparison is lifted');
++assert.equal(comparisonFacts(null).made, false); assert.equal(comparisonFacts({ vs_ideal: { state: 'bogus' } }).vs_ideal.state, 'absent');
++const sess = { sections: { prescription_delivery: 'Mark: Keep your zipper facing the fall line and steer both feet from the top of the turn.\nPeer: So focus on initiating with a guided ski from the top of the turn.' } };
++const gx = { prescription: { delivery_to_peer: 'Focus on initiating with a guided ski from the top of the turn', peer_restated: null } };
++assert.equal(speakerGuard(gx, sess).length, 1); assert.equal(gx.prescription.delivery_to_peer, null); assert.ok(gx.prescription.peer_restated.startsWith('Focus on'), "the peer's words go back where they belong");
++const gy = { prescription: { delivery_to_peer: 'Keep your zipper facing the fall line and steer both feet from the top of the turn.' } };
++assert.equal(speakerGuard(gy, sess).length, 0, "Mark's own words are left alone");
++const idx = { ...a.chunkIndex, '0000aaaa': { id: '0000aaaa-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-18', type: 'exemplar', source_ref: 'session:7uk7lnh', title: 't', text: 'EXEMPLAR …' } };
++const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['c:0000aaaa'] }, exemplar_anchor: { evaluate: 'c:0000aaaa Evaluate: Chris 2 — equal' } }, { extraction: x, chunkIndex: idx });
++assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);
++assert.equal(ne.citation_details['c:0000aaaa'].type, 'exemplar');
++assert.deepEqual(n.quality.exemplars_cited, [], 'no exemplars in context → none cited, no error');
+ console.log('selftest-score: all checks passed');
+diff --git a/src/tabs/Rationale.jsx b/src/tabs/Rationale.jsx
+index 5465745..269bb60 100644
+--- a/src/tabs/Rationale.jsx
++++ b/src/tabs/Rationale.jsx
+@@ -19,7 +19,17 @@ export const statement = (d) => {
+ };
+ 
+ export const citesFor = (detail, key) => (detail?.citations?.[key] || []).map((id) => ({ id, ...(detail.citation_details?.[id] || {}) })).filter((c) => c.text || c.title);
+-export const mentorCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author));
++/** A mentor's STATEMENTS — what goes inside quotation marks. A scored session (exemplar) is his number, not his words. */
++export const mentorCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author) && c.type !== "exemplar");
++export const exemplarCites = (detail, key) => citesFor(detail, key).filter((c) => MENTORS.has(c.author) && c.type === "exemplar");
++
++/** "Compared with a session Chris scored" — his number for the same line, and the evaluator's weaker/equal/stronger note. */
++export const ExemplarNote = ({ c, anchor }) => (
++  <div style={{ margin: "4px 0 0", padding: "5px 8px", borderLeft: `2px solid ${C.examiner}`, background: "rgba(224,160,64,0.05)", borderRadius: "0 4px 4px 0", fontSize: 12, lineHeight: 1.5 }}>
++    <span style={{ fontWeight: 700, color: C.examiner }}>Compared with a session {cap(c.author)} scored{c.date ? ` (${shortDate(c.date)})` : ""}: </span>
++    <span style={{ color: C.body }}>{anchor ? String(anchor).replace(/^\s*\[?c:[0-9a-f]{8}\]?\s*/i, "") : (c.title || "")}</span>
++  </div>
++);
+ 
+ export const MentorQuote = ({ c }) => (
+   <div style={{ margin: "4px 0 0", padding: "5px 8px", borderLeft: `2px solid ${C.examiner}`, background: "rgba(224,160,64,0.05)", borderRadius: "0 4px 4px 0", fontSize: 12, lineHeight: 1.5 }}>
+@@ -38,13 +48,14 @@ export default function Rationale({ card, open = false }) {
+       <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.02)", marginTop: 4 }}>
+         {card.lines.map((l) => {
+           const why = d.score_rationale[l.key]; if (!why) return null;
+-          const mentor = mentorCites(d, l.key), other = citesFor(d, l.key).filter((c) => !MENTORS.has(c.author));
++          const mentor = mentorCites(d, l.key), other = citesFor(d, l.key).filter((c) => !MENTORS.has(c.author));   // exemplars: neither — drawn below as a comparison
+           const ladder = d.justifications?.[l.key];
+           return (
+             <div key={l.key} style={{ marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>
+               <div><span style={{ fontWeight: 700, color: scoreColor(l.score) }}>{l.label} ({l.score ?? "—"}): </span><span style={{ color: "#b0b8c0" }}>{why}</span></div>
+               {d.evidence_count?.[l.key] && <div style={{ color: C.dim, marginTop: 2 }}>Evidence — {d.evidence_count[l.key]}</div>}
+               {mentor.map((c) => <MentorQuote key={c.id} c={c} />)}
++              {exemplarCites(d, l.key).slice(0, 1).map((c) => <ExemplarNote key={c.id} c={c} anchor={d.exemplar_anchor?.[l.key]} />)}
+               {(other.length > 0 || ladder) && (
+                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 3 }}>
+                   {other.length > 0 && (
+-- 
+2.43.0
+
