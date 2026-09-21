@@ -1,0 +1,84 @@
+diff --git a/lib/llm.js b/lib/llm.js
+index 0d0dab0..9018861 100644
+--- a/lib/llm.js
++++ b/lib/llm.js
+@@ -10,20 +10,36 @@ let _client;
+ function client() {
+   if (_client) return _client;
+   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
+-  // SDK defaults are a 10-minute timeout × 2 retries: one stalled connection can hang a run for 30 minutes.
+-  _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 240_000, maxRetries: 1 });
++  // Calls are STREAMED (see complete()), so `timeout` only bounds the wait for the response to START; a fast failure
++  // (429/529/connection reset) still gets one retry. The old setting — 240 s on a non-streamed call, plus a retry —
++  // could not fit in a 300 s function: on 2026-09-21 Opus needed ~250 s for one evaluation, the SDK cut it off at 240,
++  // started again, and Vercel answered 504.
++  _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 90_000, maxRetries: 1 });
+   return _client;
+ }
+ 
+-export async function complete({ model, system, user, maxTokens = 4000, temperature = 0 }) {
+-  const res = await client().messages.create({
++/** Longest a single model call may run. The functions that call this have 300 s; leave room for retrieval and the reply. */
++export const CALL_BUDGET_MS = 275_000;
++
++export async function complete({ model, system, user, maxTokens = 4000, temperature = 0, budgetMs = CALL_BUDGET_MS, _client: injected }) {
++  const stream = (injected || client()).messages.stream({
+     model,
+     max_tokens: maxTokens,
+     temperature,
+     system,
+     messages: [{ role: 'user', content: user }],
+   });
+-  return res.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
++  let timedOut = false;
++  const timer = setTimeout(() => { timedOut = true; stream.abort(); }, budgetMs);
++  try {
++    const res = await stream.finalMessage();
++    if (res.stop_reason === 'max_tokens') console.warn(`complete(): ${model} stopped at max_tokens=${maxTokens}`);
++    return res.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
++  } catch (err) {
++    // A clean, explainable failure inside the function's limit — never Vercel's bare 504.
++    if (timedOut) throw Object.assign(new Error(`the model (${model}) had not finished after ${Math.round(budgetMs / 1000)} s — it is running slowly right now; try again in a few minutes`), { status: 504 });
++    throw err;
++  } finally { clearTimeout(timer); }
+ }
+ 
+ /** Pull the first JSON object/array out of a model response. Tolerates ```json fences and preamble. */
+diff --git a/src/tabs/ATExam.jsx b/src/tabs/ATExam.jsx
+index da254d9..f3e2869 100644
+--- a/src/tabs/ATExam.jsx
++++ b/src/tabs/ATExam.jsx
+@@ -78,9 +78,12 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
+ 
+   // Two-step RAG scorer (§8): extract → evaluate. If either call fails, fall back to the old single-prompt scorer
+   // and SAY SO — a legacy score is on the pre-2026 lines and runs high against Chris; it must never pass as the real one.
+-  const score = async () => {
++  // opts.replaceFallback: the last attempt was the old scorer standing in for a failed new-scorer run — retry REPLACES it
++  // (it was a consolation, not a revision). Anything else passed in (a click event) is ignored.
++  const score = async (opts) => {
++    const replaceFallback = opts?.replaceFallback === true;
+     setLoading(true);
+-    const stamp = { timestamp: new Date().toISOString(), attemptNum: examRef.current.attempts.filter((a) => !isFailedAttempt(a)).length + 1 };
++    const stamp = { timestamp: new Date().toISOString(), attemptNum: examRef.current.attempts.filter((a, i, all) => !isFailedAttempt(a) && !(replaceFallback && i === all.length - 1 && a.scorer === "legacy" && a.scorer_error)).length + 1 };
+     let attempt;
+     try {
+       setScoreStep("Step 1 of 2 — taking inventory of what you actually said (about a minute)…");
+@@ -101,7 +104,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
+       else attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), scorer: "legacy", scorer_error, ...stamp };
+     }
+     // A failed run never counts against the revision limit, and a retry replaces it (also clears ones stored before this fix).
+-    upd((p) => { const kept = p.attempts.filter((a) => !isFailedAttempt(a)); return { phase: "scored", result: attempt.scores ? attempt : null, attempts: [...kept, attempt], attemptNumber: kept.length + (attempt.failed ? 1 : 2) }; });
++    upd((p) => { const kept = p.attempts.filter((a, i, all) => !isFailedAttempt(a) && !(replaceFallback && i === all.length - 1 && a.scorer === "legacy" && a.scorer_error)); return { phase: "scored", result: attempt.scores ? attempt : null, attempts: [...kept, attempt], attemptNumber: kept.length + (attempt.failed ? 1 : 2) }; });
+     setScoreStep(""); setLoading(false);
+   };
+ 
+@@ -314,7 +317,8 @@ function Scored({ exam, saveState, onRevise, onSave, onNew, onRescore, loading,
+           <Button solid tone={TONE} disabled={loading} onClick={onRescore} style={{ width: "100%", marginTop: 10, padding: 10 }}>{loading ? scoreStep || "Scoring…" : "Score again"}</Button>
+         </div>
+       )}
+-      {!failed && card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Revise-and-score again to retry it.</Hint>}
++      {!failed && card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Nothing below is on the 2026 form.</Hint>}
++      {!failed && card.form === "legacy" && current?.scorer_error && <Button solid tone={TONE} disabled={loading} onClick={() => onRescore({ replaceFallback: true })} style={{ width: "100%", margin: "2px 0 10px", padding: 10 }}>{loading ? scoreStep || "Scoring…" : "Score again with the new scorer (replaces this, uses no revision)"}</Button>}
+       <LegacyNotice card={card} />
+ 
+       {failed ? null : card.status === "scored" ? (
