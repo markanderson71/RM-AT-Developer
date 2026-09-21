@@ -81,9 +81,13 @@ export function fitSummary(summary, limit = 45000) {
   for (const shed of SHED_ORDER) { if (JSON.stringify(out).length < limit) break; const { [shed]: _drop, ...rest } = out; out = { ...rest, shed: [...(out.shed || []), shed] }; }
   return out;
 }
+/** True for a scoring run that produced nothing because the calls themselves failed (see ATExam.score). */
+export const isFailedRun = (a) => !!a && !a.scores && (a.failed === true || /^(Error:|Unable to reach|No response\.)/.test(String(a.raw || "")));
+
 /** Session object in the exact shape the old app saved (transcript + sections + summary with allAttempts). */
 export function buildSession(exam, { parseAIJson }) {
-  const cleaned = exam.attempts.map((a) => { if (a.scores) return a; if (a.raw) { const r = parseAIJson(a.raw); if (r?.scores) return { ...a, ...r }; } return a; });
+  // A run where both scorers were unreachable is not an attempt: it is never saved, counted or ranked.
+  const cleaned = exam.attempts.filter((a) => !isFailedRun(a)).map((a) => { if (a.scores) return a; if (a.raw) { const r = parseAIJson(a.raw); if (r?.scores) return { ...a, ...r }; } return a; });
   const best = bestAttempt(cleaned);
   const dialogText = lines(exam.dialogMessages, "Mark", "Peer");
   const prescribeText = lines(exam.prescriptionDialog, "Mark", "Peer");
@@ -95,7 +99,7 @@ export function buildSession(exam, { parseAIJson }) {
     bestAttempt: cleaned.indexOf(best) + 1, totalAttempts: cleaned.length, scoredAt: new Date().toISOString(),
   };
   summary = fitSummary(summary);
-  const rev = exam.attempts.length - 1;
+  const rev = cleaned.length - 1;
   return {
     id: exam.savedSessionId || uid(), date: today(), type: "at_exam",
     context: `AT MA Exam${rev > 0 ? ` (${rev} revision${rev > 1 ? "s" : ""})` : ""}`,

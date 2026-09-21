@@ -1,0 +1,163 @@
+diff --git a/src/lib/exam.js b/src/lib/exam.js
+index 9c63f7d..b17e2c3 100644
+--- a/src/lib/exam.js
++++ b/src/lib/exam.js
+@@ -81,9 +81,13 @@ export function fitSummary(summary, limit = 45000) {
+   for (const shed of SHED_ORDER) { if (JSON.stringify(out).length < limit) break; const { [shed]: _drop, ...rest } = out; out = { ...rest, shed: [...(out.shed || []), shed] }; }
+   return out;
+ }
++/** True for a scoring run that produced nothing because the calls themselves failed (see ATExam.score). */
++export const isFailedRun = (a) => !!a && !a.scores && (a.failed === true || /^(Error:|Unable to reach|No response\.)/.test(String(a.raw || "")));
++
+ /** Session object in the exact shape the old app saved (transcript + sections + summary with allAttempts). */
+ export function buildSession(exam, { parseAIJson }) {
+-  const cleaned = exam.attempts.map((a) => { if (a.scores) return a; if (a.raw) { const r = parseAIJson(a.raw); if (r?.scores) return { ...a, ...r }; } return a; });
++  // A run where both scorers were unreachable is not an attempt: it is never saved, counted or ranked.
++  const cleaned = exam.attempts.filter((a) => !isFailedRun(a)).map((a) => { if (a.scores) return a; if (a.raw) { const r = parseAIJson(a.raw); if (r?.scores) return { ...a, ...r }; } return a; });
+   const best = bestAttempt(cleaned);
+   const dialogText = lines(exam.dialogMessages, "Mark", "Peer");
+   const prescribeText = lines(exam.prescriptionDialog, "Mark", "Peer");
+@@ -95,7 +99,7 @@ export function buildSession(exam, { parseAIJson }) {
+     bestAttempt: cleaned.indexOf(best) + 1, totalAttempts: cleaned.length, scoredAt: new Date().toISOString(),
+   };
+   summary = fitSummary(summary);
+-  const rev = exam.attempts.length - 1;
++  const rev = cleaned.length - 1;
+   return {
+     id: exam.savedSessionId || uid(), date: today(), type: "at_exam",
+     context: `AT MA Exam${rev > 0 ? ` (${rev} revision${rev > 1 ? "s" : ""})` : ""}`,
+diff --git a/src/tabs/ATExam.jsx b/src/tabs/ATExam.jsx
+index 75b7193..da254d9 100644
+--- a/src/tabs/ATExam.jsx
++++ b/src/tabs/ATExam.jsx
+@@ -4,7 +4,7 @@ import { Button, Composer, Field, Hint, Input, Select, Textarea, Thread, speakTe
+ import { callClaude, saveMaSession, scoreExtract, scoreEvaluate } from "../api.js";
+ import { USERS, today } from "../lib/users.js";
+ import { parseAIJson, parseSummary } from "../lib/parseSummary.js";
+-import { PHASES, PHASE_LABEL, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, YT_RE } from "../lib/exam.js";
++import { PHASES, PHASE_LABEL, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, isFailedRun, YT_RE } from "../lib/exam.js";
+ import { scorecard, resultCard, bestAttempt, LINE_LABEL } from "../lib/scorecard.js";
+ import { briefLines } from "../../lib/coaching.js";
+ import { byDateDesc } from "../api.js";
+@@ -14,6 +14,9 @@ import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGa
+ 
+ const TONE = C.exam;
+ const AUTOSPEAK_KEY = "rmat_autospeak";
++// What callClaude returns when the call itself failed (src/api.js) — text, not a score.
++const CALL_FAILED = /^(Error:|Unable to reach|No response\.)/;
++const isFailedAttempt = isFailedRun;
+ 
+ /**
+  * AT MA Exam — 7 phases: setup → observe → dialog → prescribe → present → debrief → scored.
+@@ -77,7 +80,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
+   // and SAY SO — a legacy score is on the pre-2026 lines and runs high against Chris; it must never pass as the real one.
+   const score = async () => {
+     setLoading(true);
+-    const stamp = { timestamp: new Date().toISOString(), attemptNum: examRef.current.attemptNumber };
++    const stamp = { timestamp: new Date().toISOString(), attemptNum: examRef.current.attempts.filter((a) => !isFailedAttempt(a)).length + 1 };
+     let attempt;
+     try {
+       setScoreStep("Step 1 of 2 — taking inventory of what you actually said (about a minute)…");
+@@ -92,9 +95,13 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
+       const input = buildScoreInput(examRef.current, { pastSessions: maSessions, parseSummary });
+       const resp = await callClaude([{ role: "user", content: input }], system);
+       const parsed = parseAIJson(resp);
+-      attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), scorer: "legacy", scorer_error: String(e.message || e).slice(0, 200), ...stamp };
++      const scorer_error = String(e.message || e).slice(0, 300);
++      // Both scorers down: not an attempt. Nothing is consumed, nothing is cleared — "Score again" re-runs this function.
++      if (!(parsed && typeof parsed === "object") && CALL_FAILED.test(String(resp))) attempt = { failed: true, scorer: "none", scorer_error, fallback_error: String(resp).slice(0, 300), ...stamp };
++      else attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), scorer: "legacy", scorer_error, ...stamp };
+     }
+-    upd((p) => ({ phase: "scored", result: attempt.scores ? attempt : null, attempts: [...p.attempts, attempt], attemptNumber: p.attemptNumber + 1 }));
++    // A failed run never counts against the revision limit, and a retry replaces it (also clears ones stored before this fix).
++    upd((p) => { const kept = p.attempts.filter((a) => !isFailedAttempt(a)); return { phase: "scored", result: attempt.scores ? attempt : null, attempts: [...kept, attempt], attemptNumber: kept.length + (attempt.failed ? 1 : 2) }; });
+     setScoreStep(""); setLoading(false);
+   };
+ 
+@@ -252,7 +259,7 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
+       )}
+ 
+       {/* 7 · Scored */}
+-      {exam.phase === "scored" && <Scored exam={exam} saveState={saveState} onRevise={() => { setSaveState({ status: "idle", message: "" }); upd({ phase: "dialog", prescriptionDialog: [], presentation: "", debriefMessages: [], result: null }); }} onSave={saveToHistory} onNew={() => reset()} />}
++      {exam.phase === "scored" && <Scored exam={exam} saveState={saveState} onRevise={() => { setSaveState({ status: "idle", message: "" }); upd({ phase: "dialog", prescriptionDialog: [], presentation: "", debriefMessages: [], result: null }); }} onSave={saveToHistory} onNew={() => reset()} onRescore={score} loading={loading} scoreStep={scoreStep} />}
+ 
+     </div>
+   );
+@@ -283,24 +290,34 @@ function PreExamBrief({ maSessions }) {
+   );
+ }
+ 
+-function Scored({ exam, saveState, onRevise, onSave, onNew }) {
++function Scored({ exam, saveState, onRevise, onSave, onNew, onRescore, loading, scoreStep }) {
+   const current = exam.attempts[exam.attempts.length - 1];
++  const failed = isFailedAttempt(current);
++  const real = exam.attempts.filter((a) => !isFailedAttempt(a));
+   const best = bestAttempt(exam.attempts);
+   const card = resultCard(current?.scores ? current : null);      // same card MA History will show once this is saved
+-  const canRevise = exam.attempts.length <= MAX_REVISIONS;
++  const canRevise = real.length <= MAX_REVISIONS;
+   const didWell = current?.did_well || current?.strengths || [];
+   const opp = current?.opportunity || current?.gaps || [];
+   return (
+     <div style={{ padding: 14, borderRadius: 8, background: `${TONE}0a`, border: `1px solid ${TONE}1a` }}>
+       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+-        <div style={{ fontSize: 13, fontWeight: 700, color: TONE }}>{exam.attempts.length <= 1 ? "Initial score" : `Revision ${exam.attempts.length - 1} of ${MAX_REVISIONS}`} · {today()}</div>
++        <div style={{ fontSize: 13, fontWeight: 700, color: TONE }}>{failed ? "Not scored" : real.length <= 1 ? "Initial score" : `Revision ${real.length - 1} of ${MAX_REVISIONS}`} · {today()}</div>
+         <MeetsBadge meets={card.meets} />
+       </div>
+ 
+-      {card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Revise-and-score again to retry it.</Hint>}
++      {failed && (
++        <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(224,80,40,0.08)", border: "1px solid rgba(224,80,40,0.25)", marginBottom: 10 }}>
++          <div style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 4 }}>Scoring didn't complete — nothing was lost</div>
++          <div style={{ fontSize: 13, color: C.body, lineHeight: 1.55 }}>Your whole exam is still here and this does not count as an attempt. Score again; if it keeps failing, send Claude the two lines below.</div>
++          <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, marginTop: 6, overflowWrap: "anywhere" }}><b>New scorer:</b> {current.scorer_error || "no detail (stored before the error was recorded)"}<br /><b>Old scorer (fallback):</b> {current.fallback_error || String(current.raw || "")}</div>
++          <Button solid tone={TONE} disabled={loading} onClick={onRescore} style={{ width: "100%", marginTop: 10, padding: 10 }}>{loading ? scoreStep || "Scoring…" : "Score again"}</Button>
++        </div>
++      )}
++      {!failed && card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Revise-and-score again to retry it.</Hint>}
+       <LegacyNotice card={card} />
+ 
+-      {card.status === "scored" ? (
++      {failed ? null : card.status === "scored" ? (
+         <>
+           <ScoreGrid card={card} />
+           <Diagnostics card={card} />
+@@ -318,10 +335,10 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
+         </div>
+       )}
+ 
+-      {exam.attempts.length > 1 && (
++      {real.length > 1 && (
+         <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
+           <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>All attempts <span style={{ fontWeight: 400, color: C.dim }}>· ★ = best (MA avg + TU avg) — the one saved as this session's score</span></div>
+-          {exam.attempts.map((a, i) => { const c = resultCard(a.scores ? a : null); return (
++          {real.map((a, i) => { const c = resultCard(a.scores ? a : null); return (
+             <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", borderBottom: "0.5px solid rgba(255,255,255,0.03)", flexWrap: "wrap" }}>
+               <span style={{ fontSize: 12, fontWeight: 700, color: a === best ? C.green : C.muted, minWidth: 75 }}>{a === best ? "★ " : ""}{i === 0 ? "Initial" : `Rev ${i}`}</span>
+               <ScoreChips card={c} />
+@@ -336,8 +353,8 @@ function Scored({ exam, saveState, onRevise, onSave, onNew }) {
+       )}
+ 
+       <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+-        {canRevise && <Button tone={C.blue} onClick={onRevise} style={{ flex: 1 }}>Revise ({MAX_REVISIONS + 1 - exam.attempts.length} left)</Button>}
+-        <Button tone={C.green} onClick={onSave} disabled={saveState.status === "saving"} style={{ flex: 1 }}>{saveState.status === "saving" ? "Saving…" : saveState.status === "error" ? "Retry save" : "Save to MA History"}</Button>
++        {canRevise && !failed && <Button tone={C.blue} onClick={onRevise} style={{ flex: 1 }}>Revise ({MAX_REVISIONS + 1 - real.length} left)</Button>}
++        {!(failed && real.length === 0) && <Button tone={C.green} onClick={onSave} disabled={saveState.status === "saving"} style={{ flex: 1 }}>{saveState.status === "saving" ? "Saving…" : saveState.status === "error" ? "Retry save" : "Save to MA History"}</Button>}
+         <Button tone={TONE} onClick={onNew} style={{ flex: 1 }}>＋ Start a new exam</Button>
+       </div>
+     </div>
+diff --git a/vercel.json b/vercel.json
+index 6f2de79..fdc77ea 100644
+--- a/vercel.json
++++ b/vercel.json
+@@ -12,6 +12,9 @@
+     }
+   ],
+   "functions": {
++    "api/claude.js": {
++      "maxDuration": 300
++    },
+     "api/score.js": {
+       "maxDuration": 300
+     },
