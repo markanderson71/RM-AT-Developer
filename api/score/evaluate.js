@@ -3,7 +3,7 @@
 // the passage re-extracted and merged first. Read-only either way.
 // sessionId is only used for self-exclusion in retrieval; the session itself is not needed — the extraction is the evidence.
 import { scoreSession, scoreLine } from '../../lib/score.js';
-import { preflight, readBody, fail } from '../../lib/http.js';
+import { preflight, readBody, fail, slow } from '../../lib/http.js';
 
 export const config = { maxDuration: 300 };
 
@@ -16,10 +16,9 @@ export default async function handler(req, res) {
       if (body.lines.length !== 1) return res.status(400).json({ error: 'lines: exactly one line per call' });
       const sid = body.sessionId ? String(body.sessionId).replace(/^ma_/, '') : null;
       const session = { ...(body.session || {}), id: sid };
-      return res.status(200).json(await scoreLine({ session, extraction: body.extraction, line: body.lines[0], section: body.section, passage: body.passage, original: body.original || null }));
+      return slow(res, () => scoreLine({ session, extraction: body.extraction, line: body.lines[0], section: body.section, passage: body.passage, original: body.original || null }), 'score/evaluate(line)');
     }
     const id = body.sessionId ? String(body.sessionId).replace(/^ma_/, '') : null;
-    const result = await scoreSession({ id }, { extraction: body.extraction, debug: body.debug === true, includeSelf: body.includeSelf === true });
-    return res.status(200).json(result);
+    return slow(res, () => scoreSession({ id }, { extraction: body.extraction, debug: body.debug === true, includeSelf: body.includeSelf === true }), 'score/evaluate');
   } catch (err) { return fail(res, err, 'score/evaluate'); }
 }
