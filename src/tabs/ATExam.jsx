@@ -3,14 +3,14 @@ import { C } from "../theme.js";
 import { Button, Composer, Field, Hint, Input, Select, Textarea, Thread, speakText } from "../components/index.jsx";
 import { callClaude, saveMaSession, scoreExtract, scoreEvaluate } from "../api.js";
 import { USERS, today } from "../lib/users.js";
-import { parseAIJson, parseSummary } from "../lib/parseSummary.js";
+import { parseAIJson } from "../lib/parseSummary.js";
 import { PHASES, PHASE_LABEL, MAX_REVISIONS, freshExam, loadExam, persistExam, buildSession, examHash, hasUnsavedWork, hasContent, scoringSession, isFailedRun, YT_RE } from "../lib/exam.js";
 import { scorecard, resultCard, bestAttempt, LINE_LABEL } from "../lib/scorecard.js";
 import { briefLines } from "../../lib/coaching.js";
 import { byDateDesc } from "../api.js";
 import { ScoreChips, ScoreGrid, MeetsBadge, LegacyNotice, Diagnostics, Block, scoreColor } from "../components/ScoreViews.jsx";
 import Rationale from "./Rationale.jsx";
-import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock, buildScorerSystem, buildScoreInput } from "../lib/prompts.js";
+import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock } from "../lib/prompts.js";
 
 const TONE = C.exam;
 const AUTOSPEAK_KEY = "rmat_autospeak";
@@ -20,10 +20,10 @@ const isFailedAttempt = isFailedRun;
 
 /**
  * AT MA Exam — 7 phases: setup → observe → dialog → prescribe → present → debrief → scored.
- * Props: maSessions (for scorer comparison), mentorAssessments (Config._MENTOR_ASSESSMENTS), referenceText,
+ * Props: maSessions (for scorer comparison), mentorAssessments (Config._MENTOR_ASSESSMENTS),
  * onSaved(session) so the app can add it to its in-memory list.
  */
-export default function ATExam({ maSessions, mentorAssessments, referenceText, onSaved }) {
+export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
   const [exam, setExam] = useState(loadExam);
   const [loading, setLoading] = useState(false);
   const [scoreStep, setScoreStep] = useState("");
@@ -93,15 +93,8 @@ export default function ATExam({ maSessions, mentorAssessments, referenceText, o
       attempt = { ...result, scorer: result.meta?.scorer || "rag", ...stamp };
     } catch (e) {
       console.error("score:", e);
-      setScoreStep("New scorer unavailable — falling back to the old scorer…");
-      const system = buildScorerSystem({ mentorAssessments, maSessions, users: USERS, referenceText });
-      const input = buildScoreInput(examRef.current, { pastSessions: maSessions, parseSummary });
-      const resp = await callClaude([{ role: "user", content: input }], system);
-      const parsed = parseAIJson(resp);
-      const scorer_error = String(e.message || e).slice(0, 300);
-      // Both scorers down: not an attempt. Nothing is consumed, nothing is cleared — "Score again" re-runs this function.
-      if (!(parsed && typeof parsed === "object") && CALL_FAILED.test(String(resp))) attempt = { failed: true, scorer: "none", scorer_error, fallback_error: String(resp).slice(0, 300), ...stamp };
-      else attempt = { ...(parsed && typeof parsed === "object" ? parsed : { raw: String(resp) }), scorer: "legacy", scorer_error, ...stamp };
+      // No fallback (retired 2026-09-22, §15): a failed run is a failed run — shown as such, retried with "Score again".
+      attempt = { failed: true, scorer: "none", scorer_error: String(e.message || e).slice(0, 300), ...stamp };
     }
     // A failed run never counts against the revision limit, and a retry replaces it (also clears ones stored before this fix).
     upd((p) => { const kept = p.attempts.filter((a, i, all) => !isFailedAttempt(a) && !(replaceFallback && i === all.length - 1 && a.scorer === "legacy" && a.scorer_error)); return { phase: "scored", result: attempt.scores ? attempt : null, attempts: [...kept, attempt], attemptNumber: kept.length + (attempt.failed ? 1 : 2) }; });
@@ -312,8 +305,8 @@ function Scored({ exam, saveState, onRevise, onSave, onNew, onRescore, loading, 
       {failed && (
         <div style={{ padding: "10px 12px", borderRadius: 6, background: "rgba(224,80,40,0.08)", border: "1px solid rgba(224,80,40,0.25)", marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 4 }}>Scoring didn't complete — nothing was lost</div>
-          <div style={{ fontSize: 13, color: C.body, lineHeight: 1.55 }}>Your whole exam is still here and this does not count as an attempt. Score again; if it keeps failing, send Claude the two lines below.</div>
-          <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, marginTop: 6, overflowWrap: "anywhere" }}><b>New scorer:</b> {current.scorer_error || "no detail (stored before the error was recorded)"}<br /><b>Old scorer (fallback):</b> {current.fallback_error || String(current.raw || "")}</div>
+          <div style={{ fontSize: 13, color: C.body, lineHeight: 1.55 }}>Your whole exam is still here and this does not count as an attempt. Score again; if it keeps failing, send Claude the line below.</div>
+          <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, marginTop: 6, overflowWrap: "anywhere" }}><b>Error:</b> {current.scorer_error || "no detail"}{current.fallback_error ? <><br /><b>Old scorer (fallback, since retired):</b> {current.fallback_error}</> : null}</div>
           <Button solid tone={TONE} disabled={loading} onClick={onRescore} style={{ width: "100%", marginTop: 10, padding: 10 }}>{loading ? scoreStep || "Scoring…" : "Score again"}</Button>
         </div>
       )}

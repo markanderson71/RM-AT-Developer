@@ -7,7 +7,6 @@ import Sparring from "./tabs/Sparring.jsx";
 import MAHistory from "./tabs/MAHistory.jsx";
 import Journal from "./tabs/Journal.jsx";
 import { sealSessions } from "./lib/scorecard.js";
-import referenceText from "../reference/psia.md?raw";
 
 const OLD_APP = "https://at-dev-tracker.vercel.app";
 
@@ -123,7 +122,7 @@ export default function App() {
           <>
             {tab === "journal" && <Journal user={user} journal={data.journal} loaded={data.loaded} config={data.config} mentorAssessments={mentorAssessments}
               onEntries={(fn) => setData((d) => ({ ...d, journal: { ...d.journal, entries: fn(d.journal.entries) } }))} />}
-            {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} referenceText={referenceText}
+            {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments}
               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}
             {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}
               onUpdate={(s) => setData((d) => ({ ...d, maSessions: d.maSessions.map((x) => (x.id === s.id ? s : x)) }))}
