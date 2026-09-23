@@ -1,0 +1,49 @@
+diff --git a/src/tabs/ATExam.jsx b/src/tabs/ATExam.jsx
+index 1195a23..308314a 100644
+--- a/src/tabs/ATExam.jsx
++++ b/src/tabs/ATExam.jsx
+@@ -198,9 +198,10 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
+           <Thread messages={exam.dialogMessages} me={C.mark} them={C.peer} meLabel="Mark (trainer)" themLabel={exam.who || "Peer"} loading={loading} loadingText="Peer is thinking…" maxHeight={260} />
+           <Composer value={exam.drafts.dialog} onChange={(v) => setDraft("dialog", v)} onSend={(t) => askPeer("dialogMessages", t, false)} disabled={loading} tone={TONE} sendLabel="Ask" placeholder="Ask about their intent, focus, what they felt, what the ski did…" />
+           <Hint style={{ marginBottom: 8 }}>{exam.dialogMessages.filter((m) => m.role === "user").length}/3 questions asked</Hint>
++          <Unsent draft={exam.drafts.dialog} verb="Ask" />
+           <div style={{ display: "flex", gap: 6 }}>
+             <Button tone={C.muted} onClick={() => go("observe")} disabled={loading}>Back</Button>
+-            <Button tone={TONE} onClick={() => go("prescribe")} disabled={loading || exam.dialogMessages.filter((m) => m.role === "user").length < 1} style={{ flex: 1 }}>Move to prescription</Button>
++            <Button tone={TONE} onClick={() => go("prescribe")} disabled={loading || !!exam.drafts.dialog.trim() || exam.dialogMessages.filter((m) => m.role === "user").length < 1} style={{ flex: 1 }}>Move to prescription</Button>
+           </div>
+         </>
+       )}
+@@ -213,9 +214,10 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
+           <Review title="Peer dialog">{exam.dialogMessages.map((m) => `${m.role === "user" ? "Mark" : "Peer"}: ${m.content}`).join("\n")}</Review>
+           <Thread messages={exam.prescriptionDialog} me={C.mark} them={C.peer} meLabel="Mark (trainer)" themLabel={exam.who || "Peer"} loading={loading} loadingText="Peer is thinking…" maxHeight={260} />
+           <Composer value={exam.drafts.prescribe} onChange={(v) => setDraft("prescribe", v)} onSend={(t) => askPeer("prescriptionDialog", t, true)} disabled={loading} tone={TONE} sendLabel="Say" placeholder={exam.prescriptionDialog.length ? "Continue — answer their question or add the detail they're missing…" : "Deliver your prescription to the instructor…"} />
++          <Unsent draft={exam.drafts.prescribe} verb="Say" />
+           <div style={{ display: "flex", gap: 6 }}>
+             <Button tone={C.muted} onClick={() => go("dialog")} disabled={loading}>Back</Button>
+-            <Button tone={TONE} onClick={() => go("present")} disabled={loading || exam.prescriptionDialog.filter((m) => m.role === "user").length < 1} style={{ flex: 1 }}>Move to presentation</Button>
++            <Button tone={TONE} onClick={() => go("present")} disabled={loading || !!exam.drafts.prescribe.trim() || exam.prescriptionDialog.filter((m) => m.role === "user").length < 1} style={{ flex: 1 }}>Move to presentation</Button>
+           </div>
+         </>
+       )}
+@@ -225,6 +227,7 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
+         <>
+           {contextLine}
+           <Hint style={{ marginBottom: 8 }}>The examiner heard the dialog and the prescription. Now the technical why: observations by phase, the cascade and root cause, why this task at the biomechanics level, why this terrain, how it serves the subject's intent.</Hint>
++          <Review title="What you told the peer (prescription)">{exam.prescriptionDialog.map((m) => `${m.role === "user" ? "Mark" : "Peer"}: ${m.content}`).join("\n")}</Review>
+           <Review title="Your private notes (examiner doesn't see these)">{`Observations: ${exam.observations}\n\nRoot cause: ${exam.rootCause}`}</Review>
+           <Field label="Examiner – Present">
+             <Textarea value={exam.presentation} onChange={(v) => upd({ presentation: v })} style={{ minHeight: 160, fontSize: 14, lineHeight: 1.7 }} placeholder="Observed by phase — ski and body… Primary fundamental and the cascade… Why this IDP task, why this terrain… How it serves their intent." />
+@@ -286,6 +289,12 @@ function PreExamBrief({ maSessions }) {
+   );
+ }
+ 
++/** Typed but never sent: the words are still in the box, not in the transcript. The move button stays off until they are said or cleared. */
++function Unsent({ draft, verb }) {
++  if (!draft?.trim()) return null;
++  return <div style={{ margin: "-4px 0 8px", padding: "8px 10px", borderRadius: 6, background: "rgba(224,168,80,0.1)", border: "1px solid rgba(224,168,80,0.35)", fontSize: 13, color: C.amber, fontWeight: 600 }}>You have text in the box that the peer hasn't heard. Click <b>{verb}</b> to put it in the transcript, or clear the box, before moving on.</div>;
++}
++
+ function Scored({ exam, saveState, onRevise, onSave, onNew, onRescore, loading, scoreStep }) {
+   const current = exam.attempts[exam.attempts.length - 1];
+   const failed = isFailedAttempt(current);
