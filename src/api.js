@@ -21,7 +21,19 @@ async function sheetPostOnce(payload) {
   } catch (e) { return { ok: false, data: { error: String(e?.message || e) } }; }
 }
 
+// One Apps Script request at a time. Measured 2026-09-24: three getAll calls fired together (the login pattern) took
+// 12–29 s each and produced a 502, while the same three one after another took 1.5–2.5 s each — the script serialises
+// work on the spreadsheet, and a request killed for taking too long keeps running on Google's side, so every parallel
+// retry stacked more work behind the one that was already late. Serialising here costs a few seconds at login and
+// removes the pile-up; the proxy retry (api/sheet.js) still handles a genuinely dropped request.
+let queue = Promise.resolve();
+const serial = (fn) => { const run = queue.then(fn, fn); queue = run.then(() => {}, () => {}); return run; };
+
 async function sheetPost(payload, attempts = 4) {
+  return serial(() => sheetPostRetrying(payload, attempts));
+}
+
+async function sheetPostRetrying(payload, attempts) {
   let last;
   for (let i = 0; i < attempts; i++) {
     last = await sheetPostOnce(payload);

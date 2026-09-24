@@ -7,8 +7,11 @@
 // more than half the time, and minutes when two hangs lined up. Each upstream attempt is now cut off at
 // ATTEMPT_MS and retried here, so a bad attempt costs ~10 s instead of ~40; the browser's own retry stays as the
 // second layer.
-const ATTEMPT_MS = 10_000;
-const ATTEMPTS = 3;
+// 2026-09-24: 10 s × 3 was too eager. Under concurrent load the script is slow but alive (12–29 s), and aborting the
+// fetch does not stop the execution on Google's side — each retry stacked another one. Two longer attempts fit in the
+// 60 s function limit and give a slow-but-alive call room to finish; the browser now sends one request at a time.
+const ATTEMPT_MS = 25_000;
+const ATTEMPTS = 2;
 const looksTransient = (status, text) => status === 404 || status >= 500 || /<!DOCTYPE|<html/i.test(text.slice(0, 200)) || /"error"\s*:\s*"Unknown action:\s*"/.test(text);
 
 export const config = { maxDuration: 60 };
