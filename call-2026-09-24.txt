@@ -1,0 +1,298 @@
+00:00:20 Speaker 1
+Buddy, Mark here. Hi, bud. Bud, couple things. One, thanks for the time for the last two weeks. I don't plan on this continuing. I'm just trying to get to use your time while you got a little bit of free to get me up to going, and then I'm kind of hoping it's gonna be that we're not gonna have to be talking or chatting that much, and that it can be small corrections, not these big ones. That cool?
+00:00:49 Chris
+You're doing great.
+00:00:50 Speaker 1
+Man. Changing?
+00:00:54 Chris
+You tell me.
+00:00:56 Speaker 1
+That felt like a massive change, like on the last one. I was like, oh my god. I was like, either I'm, and that's why I was kind of like, I was because we were talking on Monday. I was like, no, I've actually killed him. He's actually provided the feedback. He's like, mother of God, what is wrong with him? And then I was like, so okay, so and then I looked through it, I was like, okay, so either I've gone off a cliff, or I'm getting more lukewarm, because it felt stronger in what I was actually talking about, especially on some.
+00:01:29 Chris
+I think there's some pieces that are better, and then some stuff that, while some stuff is better, either I wouldn't say it got worse, maybe it just lacked some clarity, or there's opportunities to bring some more things together.
+00:01:46 Speaker 1
+I would say that we can go through it certainly, and just for all transparency, I've got you on recording so we can actually take the transcript and put it to Claude. The thing about it is I know that the website's slow right now. I'm about to fix that this afternoon, so then you'll be able to go and actually see the stuff. I did take your advice. I did look at the. I think that there, I think part of it, at the beginning was that I was describing a variation, which was shorts in variable, as a yeah, and looking at where you steered me was no, what you're going to be seeing at an MA is going to be a task. So I have a look at what the descriptors are between the ski performance and everything else, and I was like.
+00:02:43 Speaker 1
+The answers are actually right there, for part of it. For part of it. And just trying to get part of it. I thought the questions and I kind of looked at the questions. I do, but I feel that I changed the question and I didn't know if that was closer to the mark. You're right. The AI did not come back with much there.
+00:03:15 Chris
+And that's where I was like, okay, great. They're not giving you much, right? The peer or the AI, right? What else do you need?
+00:03:25 Speaker 1
+So for that one there, since I know the task and the intention, and that was one of the questions.
+00:03:32 Chris
+What's the intention?
+00:03:33 Speaker 1
+The intention for that skier was to go and ski variable terrain. To be able to successfully steer through and manage the snow conditions and the terrain, smoothly, accurately, at speed, and to be able to control their speed and turn shape down there. That's about it.
+00:04:05 Chris
+You're hiding some of that though. That's kind of like the expressed intent, or desire or ideal. Great. What were you trying to do for that? You're trying to get says explicitly, Mark, what were you actually trying to do up there? What was the ski performance that you were after?
+00:04:37 Chris
+What were the fundamentals that allowed you to achieve that ski performance? Great. Whatever you said now, was that helping you to manage speed? Was that helping you to achieve a specific corridor? Was that helping you to achieve a specific tactical piece of the task?
+00:05:07 Chris
+That gives you something to work with.
+00:05:10 Speaker 1
+So I have a question on that, and I think that's great feedback. Since I already have the data of what the ski is like or what the snow is like, what the skis that they're on, the task at hand, which is defined. What data do I actually need from them in order to because I'm not coaching them? For this, so what data, other data, would I actually need to even go and speak to them?
+00:05:41 Chris
+Because I'm not. In order to actually give them something relevant at a peer level, I need to verify that you were actually trying to do what you did. Was this an ideal performance?
+00:05:58 Chris
+God no
+00:05:59 Chris
+Hell no. Great. Something that they were trying to do led them to this. Therefore, what were you trying to do that led you to this? Because we both know that we're trying to do A. You did B. What was the input like C that led you to B? What do we need to change in C to get us to A?
+00:06:27 Speaker 1
+So for that skier, right? So if they were trying to, I don't know. Let's say they were trying to. To, they were trying to. Let's say that skier was trying to do. They're trying to have speed.
+00:06:45 Chris
+They gave you something, right? They gave you fore aft pressure and pressure on the front of the ski to engage the tips to redirect and not get bucked. They gave you a little, but it doesn't suffice. Does that help you? Does that give you all the things that you need?
+00:07:03 Speaker 1
+It gives me a fun. What gives me two fundamentals that I can work around?
+00:07:08 Chris
+Are you talking about? What do you mean by the second fundamental? I only you're clearly one.
+00:07:15 Speaker 1
+Clearly, the one is fore aft. And I would say when they're talking about engage or having the tips, I'm kind of thinking. For that, it was kind of edging of having the tips engage. I'm not sure where the hell you're going with that. So with that, for the prescription for change.
+00:07:50 Chris
+The more, what else do you need? What do you? What does the prescription for change ask you to?
+00:08:02 Speaker 1
+The prescription for change is to make it relevant to the skier's intent and to the task.
+00:08:13 Chris
+Provide or prescribe specific and accurate peer level to help the skier achieve their specific outcome. Affect speed, turn shape, turn size, line, and ski to snow interaction, as needed. From the information they gave you, you got a gentle touch on what they're trying to do is not get bucked. So that's kind of like maybe a little piece of an outcome.
+00:09:01 Chris
+Maybe a piece, tiny bit of ski snow interaction, but nothing else. They have given you is going to figure out how to achieve that outcome aside from maybe that they're some fore aft and nothing of that, or they have not answered anything in regards to speed, turn shape, turn size, line, etc.
+00:09:23 Speaker 1
+So that will be if that would be up to me to try to do. To try to get. What outcome were you trying to achieve by not getting bucked around and being in the center of the ski? As a right, as a third question
+00:09:42 Chris
+Is that about right? You're just trying to get that last piece. So that's more like the tactical, right? Think about this. If you go to the other piece of the assessment. I'm sorry. Assessment. Backtrack this in. Backtrack it in. The technical understanding, while not necessarily totally being assessed in this piece to like the highest level of detail, but technical, tactical, and equipment interactions, right? It's talking about how those things, technical and tactical, right?
+00:10:26 Chris
+You're not necessarily getting into the equipment part of it, but the technical and tactical. You've got barely anything of technical, and you've got barely anything of tactical. Your job's to get some of that out.
+00:10:44 Speaker 1
+Which I kind of I think in the first question, like that was I thought that was a strong question to ask
+00:10:51 Chris
+The first question. Think you're still beating around the bush. You could be more.
+00:10:59 Chris
+Because you're making an assumption that they're trying to steer the ski.
+00:11:04 Speaker 1
+I would hope that they're trying to steer or guide the ski.
+00:11:10 Chris
+Man, they might be trying to carve it.
+00:11:19 Speaker 1
+Based upon their performance and what the task is, I wouldn't suspect so.
+00:11:24 Chris
+So when you were asking, question of your peers in your computer and tech space, right? When you're asking a question, do you leave it very open ended, or do you guide them into specifically what you're after.
+00:11:42 Speaker 1
+Kind of guiding them into it.
+00:11:48 Chris
+You're leaving this very open. When you leave it very open, you're going to get open shit answer. You know the task. Is there another way to ask this in a more effective manner? Of, hey, in variable terrain, when we are varying our or trying to give a variety of turn sizes, was there anything ski performance wise that you were focused on in order to do so? Now I've explicitly stated.
+00:12:26 Chris
+How are they trying to vary their turn shape? And what was the ski performance or the fundamental that they're after? I've given them a place to answer.
+00:12:38 Chris
+Okay.
+00:12:39 Chris
+Okay. Right, based upon that, let's say they gave me the trying to keep tips engaged, I think it's a good strategy. If that's what they gave me, it's like, okay, now. I hear that you were trying not to get bucked around, and you were focused on some four AF pressure control, right? Was there any other fundamental or tactic that you were after in order to achieve that? Like I'm getting, I'm peeling back some more layers. Because where I really dinged you.
+00:13:19 Chris
+Is here in this prescription, right? Your actual delivery to the peer, I didn't have the heart to give you a one, but it was almost like a one. Reason being, because you didn't have the information to work with. How are you able to give peer level? How are you able to give specifics? And talk about a skis interaction, right? How do you have any of that specificity or anything, if you didn't have the information to work with?
+00:13:56 Speaker 1
+Can we, based upon that, my peer is and I did try to guide it in the first question. That's why I put up the right because it doesn't know what it did. It can't even see the video. Now between myself and you when it comes to the scoring, just take in mind that my peer will never be, doesn't have the experience of it. The questions definitely, but let's give me a little bit of a mulligan on that one.
+00:14:34 Chris
+And even if they didn't give you it, you could still peel enough together to get a more accurate prescription.
+00:14:44 Speaker 1
+And I think that's one of my fears. And I know, I know what your perception is of my peers. I also know that a lot of my peers in that setting, and I do kind of agree with Dave. A lot of my peers are not so well. They're definitely focused like me because I don't. On an exam day or an assessment day, I have no idea what the hell I'm doing. And the guy asked me a question. I am literally trying to answer that person to help them. But literally, I'm just trying to. I'm so wrapped up into me that day. It's kind of hard to get into that thing. So it's a it. But I also feel that like I think if I had to ask my.
+00:15:42 Speaker 1
+Some of my peers about blending of fundamentals. I think that they might look at me sideways and think I'm alien.
+00:15:49 Chris
+Or, are there two fundamentals that you were highlighting or focused on in order to vary your turn size? You can be that blunt. If you had to pick two fundamentals that you were focused on in that run in order to vary your turn size, what were they?
+00:16:12 Chris
+I like that.
+00:16:13 Chris
+It doesn't. But you gotta be specific because otherwise, you're not gonna get anything. And then if it and the bottom line is, if they don't give you anything, you need to provide it. Like in that prescription and description, it's okay, you only gave me a little bit. I see what you're working with here, and now I'm gonna provide all the other specific, accurate. And how it's going to impact turn size, turn shape, et cetera.
+00:16:46 Speaker 1
+So on my peer delivery, where it says prescription delivery, that's kind of where I went on that first sentence. I'm hearing you say this. I'm here. I heard what you said, but I'm going off in this direction. What I observed is this: to be able to hear them and just not totally ignore what they were saying. Does that make sense? It was basically a way for me to go. I hear you, but I'm gonna go somewhere else.
+00:17:24 Chris
+And then you only give one sentence.
+00:17:28 Speaker 1
+That was so. And I didn't give my actual prescription for change, and that wasn't the program. I had gone out with the prescription for change that I had, and the task was for them to. I wanted to do a basic parallel, invariable terrain, and the reason for that is that what it would allow this gear to do is to be able to slow down movement patterns because a large part of this is rate. Being able to have something basic parallel.
+00:18:08 Speaker 1
+In where they can manage their foreaft, manage the terrain and slow down some of the extensions and rotary that they have throughout the turn. That's where I was kind of going with that. So that would allow them to be able to. That was what the prescription I had, but it wasn't here.
+00:18:38 Chris
+Copy. Between us, I could give two shits about what task you pick. Sure, is that a piece? Is it important? Honestly, I could give two shits. It's more of what is because we don't. If you look at the criteria, we're not asking you necessarily to pick the task and be like, that's the task. It's got to be that. It's like no, no. We're really after what's the specific change, and what is it going to do to get this skier closer to what they are trying to do for the agreed-upon task.
+00:19:16 Speaker 1
+For that, what I'm trying to say is for this skier to slow down the rate in which they're rotating their skis or turning their skis. And to be able to slow down their rate of extension, so that they keep snow contact while they're able to balance along the ski and not fall inside the turn. That's what I'm trying to get them to do. Slow down the rate of both of those so that they can blend and be able to guide the ski through variable terrain.
+00:19:59 Chris
+It got better the more you went along, because then you actually got to something of like a ski performance. At first, you're trying to fundamental me. It's like that's not helping. What's the outcome? So you got to like guide the ski. That's great. That's a piece, but what is that going to let this skier do closer to what they're trying to do? Why is a guy guiding a ski better? So tell me right now, what I'm the skier. Why do.
+00:20:30 Chris
+So I just told you that I'm focused on fore aft, and you just said, 'Hey, I hear you on the fore aft.' What did you actually observe me doing, and why does it not align? Tell me that.
+00:20:43 Speaker 1
+So it's going to allow the skier to practice.
+00:20:46 Chris
+Are you observed me? And why did it not align?
+00:20:54 Speaker 1
+Why did it not align?
+00:20:58 Chris
+What was I doing that didn't align with essentially what I was trying to do, and what the task is asking me to do?
+00:21:06 Speaker 1
+What you were trying, well, what you were trying to do, or what you did
+00:21:11 Chris
+What I observed. All of them, but here's what you actually did, and here's why it doesn't or does match the ideal.
+00:21:23 Speaker 1
+So what you did was at the top of the turn, you twisted the ski above the fall line and then steer the ski throughout the bottom. What ideally we want you to be able to do is guide the ski through the turn so that you can proactively turn the ski so that you can vary your turn size as you actually move through the turn.
+00:21:49 Chris
+Better.
+00:21:54 Speaker 1
+So that allows you to manage whether it's a mogul at the bottom, whether it's a change in pitch, whether you have a mound of snow, or whether you have to compact the snow.
+00:22:05 Chris
+This is not what if. What am I trying to do? It's not hypothetical. What am I trying to do? And what's the task asking me to do?
+00:22:16 Speaker 1
+Trying to move through the snow.
+00:22:17 Chris
+That's what I'm trying to do.
+00:22:21 Speaker 1
+The task requires you to actually go and move through a variety of snow conditions, because the snow conditions at the top and the bottom are going to be different.
+00:22:31 Chris
+What are the variables in skiing? Ski to snow contact when appropriate, varying turn size, creativity in the line, and managing speed. So one of those, you're getting so close. So you said that if I change my current performance, which was pivoting the ski quick at the top of the turn, and then try to steer it versus just guiding the ski throughout, how is that going to help me achieve my goal and or one of those four? Line choice.
+00:23:20 Chris
+Don't just pick one. Say it in a sentence.
+00:23:23 Speaker 1
+So this is going to allow you to change your line, vary speed, through whether you slow down.
+00:23:42 Chris
+It will allow you to vary line and speed, which is going to help you do what help me do what.
+00:23:55 Speaker 1
+Ski the slope.
+00:23:58 Chris
+Remember, it's not about skiing the slope. It's about me. What am I trying to do? What is it? To ski. Trying not to get bucked. So how do any of those help me not get bucked?
+00:24:17 Speaker 1
+By being able to navigate around obstacles in the snow, I don't know.
+00:24:29 Chris
+That's better. So now you said if I can vary my rotational control and edging, I can guide the ski, which is going to allow me to get closer to the task of varying the line, right, and showing different turn sizes, and it's going to help me, the skier, not get bucked because I can navigate the spots that might launch me, and I can find smoother snow. It seems like I'm pulling teeth, but your job in almost every single one of these, right? If I look through.
+00:25:15 Chris
+The overall, overarching. Think about this here, my man. Go to the. If I go up to here, I'll share my screen. Even if we take out these pieces, and we just look at here, it's always talking about desired skiing outcomes to enhance the clinic participant skiing. Take out all of these other things. Cause and effect. In relative to desired skiing outcomes, evaluate relative to desired skiing outcomes. Prescription relative to desired skiing outcomes. So.
+00:26:12 Chris
+Desired. That's twofold: what the skiers intending to do, and what the task is asking of them. So every time you're speaking, it should be either to both of those or to at least one of those. That's answering the question. And then if we go back to this, cause and effect. What is the key word that I have in here? Relevant to the desired outcome, and evaluate. It says sorry. It goes to intended, specific outcome, observed performance. Says intended. What's the ski you're trying to do? Then in prescription, it says again specific outcome, year level.
+00:27:08 Chris
+Achieve their specific outcome. In all of these, that has to be ever, ever present. And then if I go to the other one, the Tech MA, this goes to the contemporary skiing, and it goes into how all of these things are working together. It talks about an understanding of desired performances, skier's performance towards desired outcomes down here in equipment, observe skiers' performance and general mechanics of efficient and effective. Speed going right to the ideal. How do these things in the observe skier performance go towards efficient, effective skiing, ideal or not? Describes ideal performances here.
+00:28:07 Chris
+So this all on that pier. And comparing it to the ideal, comparing it to their intended or desired outcomes. And then over here, this speaking to the ideal mostly. And some of the choices, or sorry, some of the interactions that the skiers had that either allowed them to get to the ideal or not.
+00:28:38 Chris
+If and that's where, in some of my comments, it goes back to desired skier interaction, intended desired, like those pieces. If we don't immediately get after that in that brief dialogue, or make some assumptions and then kind of verify those assumptions with that skier, it's really tough to make that connection and communicate effectively and hit all of those pieces. If we move on where it started getting so the prescription was kind of like, e because it didn't really hit those pieces, right? And was it peer level.
+00:29:26 Speaker 1
+The conversation we had wasn't for what you saw because it was just one sentence.
+00:29:35 Chris
+So but our conversation we got there, so we got closer we got there, and then if you go towards the examiner kind of interactions, all right first paragraph was cool, just lacking a little bit of specificity. Talked about variation, varying leg length, maintaining leg length. Like what fundamentals are we talking with about here, and then also what is their intended outcome? All you said was, "Hey, they're trying to do variable." It's like, yeah, no duh, because that's what we told them to do. But what are they actually trying to do? What are they trying to do relative to the variable?
+00:30:21 Speaker 1
+What they're trying to achieve with the blending, what they're trying to achieve with the rate.
+00:30:27 Chris
+Or what are you trying to achieve tactically here? I saw you make eight turns that way, and then all of a sudden you just beelined it over here, and then made five more. What were you intending with how you did your top half to your bottom half? Was there anything you had to change, or was that a result of some of the snow conditions, or was that a tactical choice you made? Mark, the snow over on the top eight turns absolutely sucked, and it felt like it was suction cups in the bottom. I hooked the left and found some softer snow, and allowed me to keep momentum going.
+00:31:00 Chris
+Great. Hey, how did you keep momentum in the bottom stuff versus the suction cup stuff? Was there a fundamental or ski performance you're after? That's where that piece is going to rear its ugly head. It's not just that you're not answering it. It's just you don't have the information to answer it, and then it trickles because now it impacts other assessment criteria, because it's in the header of that main learning outcome. If I don't hit one of those pieces, man, that's going to trickle and hit everything.
+00:31:38 Chris
+Okay.
+00:31:41 Chris
+So it doesn't matter, how much. But if you're missing a piece, it's like, how do you speak to that? Cool. The second paragraph. I'm not looking at grammar, but it kind of got a little wordy, verbose. But I like that. We could clean some of that up, but you were starting to get from all right, well, this impacting this, and this impacting this, and now we started to see the wheels turning of how these things are interacting with one another. You could be a bit more specific, what fundamental are we hanging out in, or fundamentals, or is there a pool we're speaking to, for the body performances? Maybe a little bit more of in the timing.
+00:32:29 Chris
+A little bit, and also, is the ski affecting how the ski is bending? Is it tipping, et cetera? And again, stating the intended or desired outcome, it's got to be there. What is the ski trying to do? Because otherwise, it's really tough to compare and contrast. This is ideally what we should be doing. But then, if you just list what the skier did, you're like, "Well, what did that do to either help the skier achieve their intended outcome or not? And what did that performance the skier gave align to the ideal or not? Where was the miss?" Speaking to those hits or misses.
+00:33:22 Speaker 1
+And not just say did not allow me to vary his term shape and size. It created, whatever it is.
+00:33:31 Chris
+It presented itself with a consistent like or one chord or one size turn short. So what did it do?
+00:33:44 Speaker 1
+Twisting of the ski didn't allow him to.
+00:33:48 Chris
+A quick twist doesn't allow a variation of rate. Therefore, if I don't vary rate, I'm going to have the same size turn. More or less. Some simple fixes, but they take you away from the clarity that we're after. What else? So yeah, and then even in here, in that third paragraph, it seems like you're kind of more addressing what was going on.
+00:34:26 Chris
+For the task you chose, versus the skier needs to do this. Vary the rate. It'll allow them to do this. This gets them to their desired outcome of X or Y, whatever that is.
+00:34:43 Speaker 1
+I see what you're saying. I, I, I was justifying why I picked that instead of actually the prescription for change for the, no. Like, I see that.
+00:34:56 Chris
+Justify what your understanding is.
+00:35:01 Speaker 1
+Body ski performance. And I'm being a little verbose with the because of the transcription, but the ass there in the prescription for change is not to describe why I picked this and why to help them succeed in the thing. State the damn thing that I need them to change, which for this skier would have been rate, and his blending of his mechanism of using body rotation, foot to foot, whatever. Because otherwise, I don't. Because if he changes this blend of, and I'm just kind of making up. But if he for this, if he had to change the rate of his, the rate and mechanism of his rotation, his mechanism causes the rate.
+00:35:51 Speaker 1
+The way that he's extending his legs, which for him is fore aft, but it also affects edge angle, the way he's interacting with the snow, and the way he's able to actually guide the skis. That's what we have to change for him to be able to guide the ski and be able to go through variable terrain.
+00:36:21 Chris
+Something like that. Makes sense. And, even just in a simple fashion, it's like quick moves, ski moving away from the body. Eliminates multiple phases of the turn. Therefore, he's trying not to get bucked, but the only option is to get rid of the bucking because the only ski to snow interaction is in a short amount of time at the end, when the ski is going across the hill.
+00:36:52 Chris
+This is productive.
+00:36:57 Chris
+You could literally go just by sheer nature of time, pressure is going to be quite high because direction change, change of center of mass, like continuous from a motion. Now I'm getting into some physics stuff. How else can you support it? Just by saying well, the fundamental state. It's like, hey, here's also physics. If I cut anything down and eliminate the amount of time something has to interact, it's going to be more intense. He's trying to be less intense and not get bucked. A way to not get bucked is this, or another way to not get bucked is varying your line to avoid parts where it might be a little bit more bumpy.
+00:37:43 Chris
+Yeah.
+00:37:45 Chris
+And that kind of gets into the next piece of your biomechanics and physics were very light.
+00:37:54 Chris
+Okay.
+00:37:55 Chris
+And this gets into what I was just stating there. It's okay, well, you keep speaking to this guided ski. Why is that important? It boils down to time, right? Time and ski-to-interaction over a longer period of time. Dissipates energy, dissipates pressure, allows more ski interaction over a longer period of time, helps him not get bucked, right? He can mirror terrain, conservation of energy versus inefficiencies. Those are all pieces. Direction change is key.
+00:38:46 Chris
+If I'm trying to change direction really quickly, my timing is going to be. That's on the. What's the denominator, right? It means it's going to be like it's going to be a really intense movement. Just ways in which you can bring in some biomechanics and physics to help support. And then maybe a more specific thing with regards to the equipment, right? You were talking about like I appear to be on wider, which would allow them to. It's like, well, that's great. That's what, what in theory will allow them to do it. But how were they actually using it? It might promote ability to steer the ski. That's great. That's going to help you. The only thing he said was that observed it quickly bent in the snow conditions, and then he said that this would help the skier.
+00:39:40 Chris
+Deal with snow and terrain that would push on the ski by bending and not transferring a pressure spike. It doesn't necessarily answer how the skier is using this tool, either to their advantage or disadvantage. So if they're on a wider ski and they have this movement pattern, how is that helping them or hurting them? Answer that right now. How is it helping or hurting them? They're on an all mountain ski.
+00:40:10 Speaker 1
+It's helping him because he's going to get bucked around less. He's going to have to react less against the train pushing two and four, four on it, because as he hits the train, the equipment will bend and not transfer forces. If it's stiffer and you hit something, then that material will transfer energy from the bump into your torso and into your legs. If something's more flexible, it allows, like a shock absorber, to absorb the forces and not you.
+00:40:49 Chris
+Or if I'm in soft snow, what is that stiffer ski gonna do if it doesn't give the energy to me?
+00:41:00 Speaker 1
+It's gonna give it to the snow
+00:41:05 Chris
+Which is gonna do what?
+00:41:06 Speaker 1
+It's gonna auger.
+00:41:08 Chris
+Perfect. There you go. Say that.
+00:41:11 Speaker 1
+It's going to hover the ski.
+00:41:15 Chris
+Despite the accuracy, relative to the task, the ski that the skier is on, all mountain, helped them because it takes some of the energy from their quick movements. If they were on something different, like a race ski, which is stiff, they would auger and they probably wouldn't be able to use this movement pattern.
+00:41:42 Speaker 1
+Right? Same with like, but with the wide ski, just to use that as an example. On a wider ski, is going to allow the ski, despite their in not being capable of being able to guide the ski at the top of the turn. It does allow. It would allow. A skier, or it does help them to be able to pivot the ski, right? Because the ski wants to flatten. Is that about right? Which would then allow them to shape the turn.
+00:42:19 Chris
+A wider ski takes more effort to tip because they push the ski out, it's not going to hurt them as bad as if they were on something that was really narrow. The edge angle won't be as great.
+00:42:41 Speaker 1
+Could I also say because they're on a wider ski, it gets the foot to foot, right? It's going to allow them to have compactness into the snow, so they're not going to have to manage foot to foot and stance with as much as someone on a much narrower ski because of the surface.
+00:43:07 Chris
+I might even go to that. It might be just like they're on a wider ski, riding more on the surface of the snow versus in the surface of the snow. I might speak to why that's going to require a different blend than if they were.
+00:43:27 Speaker 1
+Also helps them with speed control. It would be exactly opposite.
+00:43:37 Chris
+Because it's after what's the ski-snow interaction, right? Or how are they interacting? If you go to the actual piece of it, it identifies effects of equipment on the skier's performance toward the desired outcomes, and how equipment choice is impacted or interacting with the environment. You got both pieces, right?
+00:44:02 Speaker 1
+I can take that. So I'm feeling groovy with that. I felt like Monday was like a few kind of light bulbs went on, and that felt stronger. I think one of the things that kind of got muddled in the middle of the section was that I started kind of overthinking it. In the observed performance of what they were doing, I was just trying to get the blending of it, and I was kind of rethinking some things, but I can take the feedback that you get and hit that.
+00:44:50 Chris
+So I think you're, it's moving in a good direction overall, right? Like, and this. While it doesn't necessarily reflect in the scoring, is a better performance. Like overall. And like one thought I had was like, I get that like you can still, I think that it's it's important you're still practicing, asking good questions for your peer, right.
+00:45:28 Chris
+But you don't even need to have that many. If you just have four good questions that you ask on repeat, you don't have to reinvent the wheel every time. They could literally be your same four questions that you always ask, because they work and they give you most of the things you need. One thought I did have.
+00:45:50 Speaker 1
+You guys do that. I know your questions, and I've heard Hafer's questions as well. You guys — I wouldn't call them canned, but you certainly have a selection of questions that you have.
+00:46:14 Chris
+I got mine on speed dial. I have four or five questions that are always on speed dial.
+00:46:21 Chris
+Mhm.
+00:46:23 Chris
+Because they kind of get to where I'm at. A thought I had, and I don't know if it'll work, but honestly, in the pure piece, right? Could you literally just ask AI or whatever your algorithm to do simply? Let's see if it pops this up here.
+00:46:55 Chris
+But could you literally just have it respond with one or two fundamentals at random? Respond to one of the following: speed up, slow down, maintain corner and turn shape, maintain speed and snow contact, and also bring in one of the following: guide the ski, keep the ski traveling smoothly through the arc, allow the ski to push me from term turn, bend the ski most consistently and deeply as I exit the fall line. Minimize getting or carving the ski when conditions allow. Literally, it doesn't matter. Literally, just randomize any combination of those three.
+00:47:33 Speaker 1
+I think the other thing that I could do to make it even we could do that. One of the other things that I was thinking of doing is to go and reference the IDP. It's the task list itself. And to reference that, so just go and if I mention, that's why I put it in. This was the first time it tried to do it. Was that in the setup for it? It asked me what train it's on, and it asked me the task. So I was like, in the task list, choose something in there that you're focused on, like a body ski performance, whatever an outcome is that's.
+00:48:19 Speaker 1
+For that ski performance in that terrain, that makes sense. I'll see if I can do that and I'll get the speed up for it as well. By the way, the coaching of it, the examiner piece, that's not until those questions are not. That's still the old AI. That's going to be in like three or four more versions, and it should get to the examiner ones because the examiner ones were just a bit better, but they were I don't know.
+00:49:01 Chris
+It did get closer with the AI. It was a little higher in some and equal in one. It actually had you lower in the cause and effect than I did.
+00:49:30 Chris
+It scored you two three two, and I had you three two.
+00:49:43 Speaker 1
+So 
+00:49:44 Chris
+I can do. That's a lot closer than it was before when I was throwing twos and it was throwing fours and threes.
+00:49:52 Speaker 1
+It's definitely getting better. Let me show you what, because I don't know if you can see this. You can always log in as me, by the way. Let me show you. So a couple of things that it's doing that I believe is going to help again. If you ever log in, it's given the justification for it, cause and effect. It's actually using your words, lack of connection, blah, right? And the dates that you actually give it. That's cool. You can always log into me, and you can always reference this, but yeah, lack of connection of fundamental skills, blah.
+00:50:45 Speaker 1
+So one of the things that says seven casual claims, zero completes. This one I'm not sure really understands what the complete chain is. Because it's looking at that there's a chain of events.
+00:51:02 Chris
+And I think some of it I can extrapolate because it's one run on. That's where I think you're claiming this, you're claiming that, and it. There are part of a turn, or just being a little bit more specific of like what that ski is doing, or fundamental you're playing in. I think it'd be a little bit more like okay, this to that.
+00:51:26 Speaker 1
+So you can always go in here, not the well
+00:51:31 Chris
+It actually showed me that.
+00:51:33 Speaker 1
+It does show you this.
+00:51:35 Chris
+Good. Because under coaching, it shows me AI suggestion, and then it underlines the. Like Chris, September seventeenth. Naming fundamentals is not connecting them. Equipment of the two AI suggestion that I had, Chris. There is no speaking of how the equipment is interacting with biomechanics and physics, or biomechanics and physics, and how the skier's desired performance is playing a part in the trio of factors. Example of this would be. So it's giving that.
+00:52:04 Speaker 1
+I will take this back to the drawing board. I need a couple of more skiers so I don't pick a level two skier. That'd be good. From you. Any other anything else on the MA?
+00:52:25 Chris
+I think that's enough to chew on right now. I don't think me giving you any more is going to help you. That's true. Right now, I think you have enough to focus on.
+00:52:35 Speaker 1
+A couple more skiers would be good, and we can call. I did do the. If you could have a look. Actually, hold on. I'm gonna pause this.

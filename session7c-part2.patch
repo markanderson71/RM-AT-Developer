@@ -1,0 +1,291 @@
+From 1f64faa1b432d33995c77d1cf465e4c9e53392ef Mon Sep 17 00:00:00 2001
+From: claude <claude@local>
+Date: Fri, 25 Sep 2026 16:08:51 +0000
+Subject: [PATCH] =?UTF-8?q?Session=207c=20part=202:=20v2-rag-5=20=E2=80=94?=
+ =?UTF-8?q?=20graded-field=20exemplar=20relations,=20exemplar=5Fbounds=20e?=
+ =?UTF-8?q?nforced=20in=20code;=20baseline=20logged?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ AT_Scoring_Architecture.md |  8 ++++-
+ lib/assembler.js           |  1 +
+ lib/prompts/evaluate.js    | 68 ++++++++++++++++++++++----------------
+ lib/score.js               | 34 ++++++++++++++++++-
+ scripts/selftest-score.mjs | 32 ++++++++++++++++++
+ 5 files changed, 112 insertions(+), 31 deletions(-)
+
+diff --git a/AT_Scoring_Architecture.md b/AT_Scoring_Architecture.md
+index 1dce0a4..d4b523c 100644
+--- a/AT_Scoring_Architecture.md
++++ b/AT_Scoring_Architecture.md
+@@ -1,6 +1,6 @@
+ # AT Development Journal — Scoring System Architecture
+ 
+-**Status:** Building — sessions 1–6 live; 7 built (done-when open on `entryType` header, Chris's address, six entries, depth read, email); 7b live; 8 live (agreement half met; open: `MENTOR_TOKEN`, Chris's approval pass — **done 2026-09-25: pending queue 0, 9/18 + 9/24 approved**); **7c (calibration) in progress** — three blind cards, 18 lines: exact 5 · within-one 17 · AI over on 12 of 13 misses; step 1 (session-stamp the 9/24 call) and step 2 (baseline on the approved store) tooled, awaiting Mark's live runs; template still `v2-rag-4`; next is 9
++**Status:** Building — sessions 1–6 live; 7 built (done-when open on `entryType` header, Chris's address, six entries, depth read, email); 7b live; 8 live (agreement half met; open: `MENTOR_TOKEN`, Chris's approval pass — **done 2026-09-25: pending queue 0, 9/18 + 9/24 approved**); **7c (calibration) in progress** — three blind cards, 18 lines: exact 5 · within-one 17 · AI over on 12 of 13 misses; step 1 (session-stamp the 9/24 call) and step 2 (baseline on the approved store) tooled, awaiting Mark's live runs; `v2-rag-5` built (graded-field exemplar bound, enforced in code), A/B pending Mark's runs; next is 9
+ **Owner:** Mark Anderson
+ **Ground truth:** Chris (AT Assessor)
+ **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
+@@ -518,6 +518,7 @@ Recorded so they aren't re-argued.
+ 
+ *(append one line per build session: date · session # · built · decided · deferred)*
+ 
++- **2026-09-25 · Session 7c, part 2: baseline read, `v2-rag-5` built (A/B pending)** · Stamp ran: 32 of 38 `zoom:2026-09-24` chunks → `sjm4bip` (29:35 "the first paragraph" added to the ranges after the dry run); six form principles 25:15–32:29 stay general. 7uk7lnh exemplar re-ingested post-6c. **Baseline — `v2-rag-4` on the three fixed extractions against the approved store, no self-leak:** 7uk7lnh 3/3/3 · 2/2/2 vs Chris 2/2/3 · 2/3/3; sjm4bip 2/3/3 · 3/2/2 vs 3/2/2 · 3/2/2; a5v6zxm 3/3/3 · 3/3/3 vs 2/2/2 · 2/2/2. **18 lines: exact 5 (28%) · within-one 18 (100%) · over 10 · under 3 · mean Δ +0.39** (pinned scores: 5 · 17 · 12 · 1 · +0.67). Chris's approved content moved 7uk7lnh's Evaluate 4→3 and Equipment 4→2 by retrieval alone (12–13 of the 9/24 chunks in every context). Still: **Evaluate +1 on all three (0/3 exact, Δ +1.00)**; a5v6zxm 3 on every line against 2s, shown all three Chris exemplars (2s and 3s), cited two, above every one. · **Diagnosis from `exemplar_anchor`:** the bound is argued from volume — "stronger on the unit because more claims reach ski performance (8 vs 5) and outcome (4 vs 2), but still 0 complete… bound ≥3"; "comparable or slightly stronger… bound ≥2" → 3; "both made with more outcome dimensions (4 vs 3)… stronger… ≥2" → 3. Two lines with 0 complete on both sides are equal, and the header already says equal is a ceiling; the evaluator names the relation loosely and rounds up. The 6b adder pattern, back in a softer form. · **Built `v2-rag-5`:** (1) weaker / equal / stronger defined by the unit's graded fields (complete vs none, made vs partial vs absent, unprompted vs prompted, a link present vs missing); counts, dimensions, fundamentals, concepts, words are never "stronger"; "comparable" is equal. (2) `exemplar_bounds` — structured, one entry per exemplar in context per line — and `exemplarBound()` in `lib/score.js` **enforces the ceiling in code**: equal or weaker to a line Chris scored N ⇒ score ≤ N, N read from the exemplar's stored scorecard (assembler `chunkIndex[].scores`), never from the evaluator; lowest ceiling wins; no floor (stronger never raises — that was the inflating direction); logged in `guards_applied`; same guard in `normalizeLine` so practice matches. `exemplar_anchor` string kept (UI reads it). Template trimmed to 2,999 tok with no rule removed. Selftests: bound cases (equal clamps, weaker clamps, stronger inert, misreported N ignored, non-exemplar id invalid, unders untouched, section averages recomputed). · **Prediction, from the baseline anchors as written:** Evaluate 3→2 on all three (a5v6zxm weaker on vs_intent; sjm4bip and 7uk7lnh equal to a both_made line Chris scored 2); a5v6zxm's other five lines stay 3 — their anchors are equal to 3-lines (sjm4bip CE/DP, 7uk7lnh Rx/Bio) or genuinely stronger on a graded field (Eq: effect stated) — so expected ≈ exact 8/18, Ev 3/3, mean Δ ≈ +0.22, no under worsened (the three unders all have equal/weaker anchors and scores already ≤ N). · **Not run here:** `--reuse --label v5` on all three + `npm run ab -- --labels base,v5`. Adopt only if no line regresses. · Decided: the desired-outcome gate is **untestable on these cards** — all three sessions name the intended outcome (vs_intent partial/made on each), so it would fire on none; parked in §17 until a session that omits it. The 51:02 C&E item is **not tunable from counts**: all three have 0 complete, similar partial profiles, and Chris gave 2 / 3 / 2 — his "one run's worth" and specificity are depth judgments the inventory does not carry; recorded, no change. **a5v6zxm is the open problem**: on the inventory it is the strongest of the three (11 connections, 8 unprompted, ideal with 5 fundamentals, equipment effect stated) and Chris scored it lowest; his reasoning for it is nowhere in the store (the 9/21 call is not transcribed). Ask him, or get that call.
+ - **2026-09-25 · Session 7c (backend — calibration), part 1: tooling + prereq check** · Mark: prereqs done. Verified live, not from the doc: pending 0; `zoom:2026-09-24` 32 chunks approved by Chris (14:39–14:45); 9/18 batch cleared; three blind cards with exemplars (`a5v6zxm`, the 9/21 session, submitted blind 9/25 with `ai_at_submit` — closes the "post the 9/21 verbal card" item as a real blind card). Agreement (blind): 18 lines, exact 5 (27.8%), within-one 17 (94.4%), AI over on 12 of 13 misses, mean +0.67; `v2-rag-4` alone 2/12 exact, 12/12 within-one, 9 over; Evaluate +1 to +2 on every session; `a5v6zxm` is 3 vs Chris's 2 on five lines. **Prereq gap found:** the 9/24 chunks carry no `metadata.session_id` — the ingest ran without `--sessions` — so Chris's spoken critique of `sjm4bip` (10:51 "your first question", 24:29 his model prescription for that skier, 33:48 "in the third paragraph", 37:45 "your biomechanics and physics were very light", 38:46 equipment, 51:02) would be retrieved by that session's own rescore. · Built: `store.stampSessionId` (provenance only — text, tags, embedding, approval untouched; refuses to overwrite a different id without `--force`), `scripts/tag-sessions.mjs` (ranges → stamp, dry run, same `normalizeSessions` as ingest); ranges by the 9/18 precedent (general stretches stay untagged): `00:00:00–00:25:10`, `00:33:20–00:44:00`, `00:50:40–00:52:35` → `sjm4bip` = 26 of 32; the six form principles 25:15–32:29 stay retrievable for all sessions. `score.mjs --label <x>` writes `out/score-<id>.<x>.json` and leaves the base file alone; `--reuse` without a base file takes the extraction stored with Chris's exemplar. `scripts/ab-report.mjs` prints the 18-line matrix per variant, retrieval by call, exemplars shown/cited, and flags a self-leak on either provenance field; assembler manifest chunks now carry `session_id`. `npm run tag:sessions`, `npm run ab`. Selftests score / ingest pass. · **Not run here (no keys):** the stamp, the 7uk7lnh re-ingest, the three baseline runs — Mark runs them (order in the reply); part 2 records the baseline and decides on A/B. · Decided: stamping `session_id` on an approved chunk is provenance, not an edit — it is what `--sessions` would have written at ingest; logged, not silent. Template untouched until the baseline is read.
+ - **2026-09-24 · Session 8 — live check** · Deployed from `main` (`5ba50f1`). Mark: Progress tab shows the 2026-scored sessions in trends and recurring gaps, Agreement shows Chris's blind card on `7uk7lnh` (3/6 · 5/6), and as Chris the 37 pending statements from `zoom:2026-09-18` are listed with 42:23 and 49:35 starred first. **Agreement half of done-when met.** Open: `MENTOR_TOKEN` on Vercel; Chris's first approval pass (his action — closes the session and moves him to the new app).
+ - **2026-09-24 · Session 8 (frontend — Progress)** · Mark: add where the mentor wants him challenged or pushed. · Built: `src/lib/progress.js` (pure), `src/lib/cites.js` (citation readers out of `Rationale.jsx`), `tabs/Progress.jsx`, `tabs/AgreementPanel.jsx`, `tabs/ChunkApproval.jsx`; `App.jsx` adds the tab for both roles. **Development Assessment:** four fields — the fourth, `challenge` ("Where to challenge or push"), is stored in the same `_MENTOR_ASSESSMENTS` blob, rendered to the `mentor_assessment` chunk by `bootstrap.mjs`, and fed to the examiner through `mentorGapsBlock` ("push him on — …"). Writes are per mentor: re-read the live blob, merge this mentor's four fields, write the one Config column (the old app wrote the whole blob from memory on every keystroke); autosave 1.5 s, no-change → no write, another device's change taken only while nothing is being typed. **AI analysis** (mentor): `ASSESSMENT_SYSTEM` / `buildAssessmentUser` / `parseAssessmentReply` in `prompts.js` — built from `assessmentContext()`: his own scorecards with the AI's beside them on sessions he has scored, the evaluator's gap lines on those (labelled AI), sessions he has not scored give date, task and Mark's words and **no number**; old-scorer numbers never shown; journal with depth reads and comments; four sections, each with an "append to my field" button; nothing saved until it is in his fields. **Trends:** 2026-form cards only via `scorecard(session,{viewer})`, oldest → newest, Chris's number under the AI's where he scored; old-scorer sessions in a collapsed labelled list, never mixed; a mentor sees only the sessions he has scored and is told how many are withheld. **Recurring gaps:** every `gap_to_next` grouped by line, newest first, lowest average first; a line recurs at ≥2 sessions, "same gap every time" when the because-clauses share ≥3 content words, theme = the shared words; the first Chris citation under each; sealed sessions contribute nothing. **Agreement (§12.4):** `/api/agreement` drawn as blind headline (exact / within-one / same result against the §1 targets), not-blind reported and not counted, per-line table with lean and mean Δ, inline-SVG trend over the window, by-scorer line, per-session deltas, excluded list; a mentor can only request `mentor=<himself>`; the candidate switches between Chris / Gates / Mike. **Zoom approval (§12.3):** pending grouped by call, the 42:23 and 49:35 statements starred first (`PRIORITY`, one-off), each with timestamp / type / hedged (+note) / check-speaker / watch / criteria / skills chips, the cleaned text with **Heard:** (verbatim `quote`) and the ASR fixes under it, a bracket warning, context on the call, "Replaces an earlier statement?" candidates with the §5.6 rule stated; Approve (with edits and replaces), Edit (stays pending; type, lines, skills, clears hedged), Delete (confirm), bulk-approve of selected; the candidate sees the list and may delete; decisions tallied per type in the browser (§17 "extraction quality"). **Auth (§17):** `requireToken` in `lib/http.js` — `MENTOR_TOKEN` checked as `X-AT-Token` (or `?token=`) on `chunks/pending`, `chunks/approve`, `agreement`; unset = open and logged, `pending` reports `auth: "open"` and the tab shows it; 401 `{ auth: "required" }` → the tab asks for the code once and keeps it in localStorage; `api.js` sends it on every `/api` call. `chunks/search` gains `trim: true` (no metadata). Function count still 12. · Verified offline: `npm run test:progress` (8 groups — incl. the 9/18 comparison reproduced through `agreementView`, no AI number for a sealed session in trends / gaps / AI-analysis context, token gate open/401/header/query); `npm run render:progress` (16 checks as Mark, Chris, Gates — Chris's page never carries the unscored session's name with a score, agreement locked to himself; Gates sees no number at all); history / exam / score / ingest / zoom / journal / ops selftests; `vite build` clean (333 KB). `AT_Mentor_Guide.md` rewritten for the new app (blind scoring, four fields, approval, agreement, access code) and checked into the repo. · **Not verified here (no keys, no deploy): every live call** — `MENTOR_TOKEN` set on Vercel; Chris entering the code; his approvals of the 37 pending chunks (42:23 and 49:35 first); the agreement panel against the live store (it needs `ingest:scores` to have run — session 6); the AI analysis call. Done-when open until Chris approves and the panel shows the two cards. · Decided: shared `MENTOR_TOKEN` is the session-8 auth (per-user signed login stays in §17); the fourth field goes to the examiner now, to the pre-exam brief and Challenge Me later (§17). · Deferred: see §17.
+@@ -589,6 +590,11 @@ Recorded so they aren't re-argued.
+ 
+ - **Session 8 follow-ups:** (a) `challenge` reaches the examiner (`mentorGapsBlock`) and the store (bootstrap) — not yet the pre-exam brief on the AT Exam setup screen or the Journal Challenge prompt beyond what `mentorGapsBlock` already carries; add with the next touch of those tabs. (b) `mentor_assessment` chunks are still written only by `bootstrap.mjs` (§6.5 "on save" not wired) — a saved assessment reaches the scorer at the next bootstrap; fold into `/api/ingest/comment` as `{ kind: 'assessment', mentor }` (no new function). (c) `PRIORITY` in `progress.js` stars the 42:23 / 49:35 statements by timestamp — remove once approved. (d) The approval tally lives in the browser's localStorage; if the delete rate matters for tuning `zoom-2`, log `{text, reason}` server-side (the earlier §17 item). (e) Agreement's "AI leans" uses ±0.3 mean Δ as the threshold — arbitrary at n=1–2; revisit at ten cards. (f) The recurring-gap theme detection is lexical (shared content words in the because-clauses); it will call two different gaps "the same" when the template phrasing repeats. Good enough to point at a line; not evidence.
+ 
++- **7c open — a5v6zxm.** Chris 2 on every line; the extraction reads as the strongest of the three blind sessions. Not a scorer bug until his reasoning is in the store: the 9/21 call (where the card was given) is not recorded/ingested. Either ingest it or ask Chris for one comment on the session — "Weak L3 candidate" is the who, not the why.
++- **Desired-outcome gate (25:15) — parked, untestable.** All three blind sessions name the intended outcome; the gate would fire on none. Re-open when a card arrives for a section that omits it.
++- **C&E specificity (51:02) — not tunable from counts.** 0 complete on all three; Chris 2 / 3 / 2. Needs Chris's per-claim read of one session (which claims he credits as a chain and why) before any rule.
++- **`stated_chris` in `exemplar_bounds`:** if the evaluator's stated N diverges from the stored N often, it is misreading the exemplar text — check the render before touching the template.
++
+ ## Appendix A — Glossary for the builder
+ 
+ - **MA** — Movement Analysis. Observe a skier, describe, diagnose cause, prescribe a change, explain why.
+diff --git a/lib/assembler.js b/lib/assembler.js
+index dba2721..f5b6e53 100644
+--- a/lib/assembler.js
++++ b/lib/assembler.js
+@@ -133,6 +133,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+       chunkIndex[shortId(c.id)] = {
+         id: c.id, slot, source: c.source, author: c.author, date: c.date, type: c.type, source_ref: c.source_ref,
+         title: c.metadata?.title || null, session_id: c.metadata?.session_id || null, similarity: c.similarity != null ? Number(c.similarity.toFixed(4)) : null,
++        scores: slot === 'exemplars' ? (c.metadata?.scores || null) : undefined,   // Chris's numbers, for the exemplar-bound guard (lib/score.js)
+         text: c.text,
+       };
+     }
+diff --git a/lib/prompts/evaluate.js b/lib/prompts/evaluate.js
+index 8ef73b8..6cd4403 100644
+--- a/lib/prompts/evaluate.js
++++ b/lib/prompts/evaluate.js
+@@ -28,68 +28,77 @@ import { SCORED, SCORED_CRITERIA, LEGACY_CRITERIA, CRITERION_LABEL, SKILLS, PHAS
+ //   levels above: 4" / "three levels above: 4" in exemplar_anchor. The instruction said "start from Chris's number and
+ //   move for a named difference"; with one exemplar, and that one the all-2s session, every line was "stronger than a 2"
+ //   and the evaluator did arithmetic on it. An exemplar can only BOUND a score (≤N or ≥N); the rung is earned on the scale.
+-export const EVALUATE_VERSION = 'v2-rag-4';
++// v2-rag-5 (2026-09-25, session 7c — calibration, three blind cards, 18 lines, on fixed extractions): the bound was being
++//   argued from VOLUME. Anchors read "stronger on the unit because more claims reach ski performance (8 vs 5) and outcome
++//   (4 vs 2), but still 0 complete… bound ≥3" and "comparable or slightly stronger… bound ≥2" — then the score was N+1. With
++//   0 complete on both sides the evidence is equal, and equal is a ceiling. Two changes: (1) weaker / equal / stronger are
++//   defined by the unit's graded fields (complete vs partial, made vs partial vs absent, unprompted vs prompted, a link
++//   present vs missing); counts, dimensions, words, fundamentals named are never "stronger"; "comparable" is equal.
++//   (2) exemplar_bounds is structured and the ceiling is enforced in code: equal or weaker than a line Chris scored N ⇒
++//   the score cannot exceed N (guards_applied). Chris's N is read from the exemplar, not from the evaluator.
++export const EVALUATE_VERSION = 'v2-rag-5';
+ 
+ export const EVALUATE_SYSTEM = `You are scoring a PSIA-RM Alpine Trainer (AT) Movement Analysis session the way Chris, the AT Assessor, would score it on the 2026 AT MA/TU Assessment Form. The candidate is Mark, a Level 3 instructor working toward AT. AT candidates train instructors; the bar is above Level 3.
+ 
+-You are given, in order: the form's scale and six definitions; statements by Chris; sessions Chris scored (exemplars); PSIA reference; and a SESSION EXTRACTION — a neutral inventory of what Mark actually said. The extraction is the only evidence of Mark's performance. In the extraction, null, false, or an empty list means Mark did not say it. Do not fill those in, or credit what a competent candidate would have meant.
++You are given, in order: the form's scale and six definitions; statements by Chris; sessions Chris scored (exemplars); PSIA reference; and a SESSION EXTRACTION — a neutral inventory of what Mark actually said, the only evidence of his performance. Null, false or an empty list means he did not say it: do not fill it in, or credit what a competent candidate would have meant.
+ 
+ Vocabulary is shared with the extraction: skills = ${SKILLS.join(', ')}; phases = ${PHASES.join(', ')}; outcome dimensions = ${OUTCOMES.join(', ')}.
+ 
+ SCORED LINES
+ Movement Analysis: ${SCORED.ma.map((k) => `${k} (${CRITERION_LABEL[k]})`).join(' · ')}
+ Technical Understanding: ${SCORED.tu.map((k) => `${k} (${CRITERION_LABEL[k]})`).join(' · ')}
+-Pass = MA section average ≥ 4 AND TU section average ≥ 4. Averages are computed for you afterward; score each line on its own evidence and do not steer toward or away from a pass.
++Pass = MA average ≥ 4 AND TU average ≥ 4, computed afterward; score each line on its own evidence, never toward or away from a pass.
+ 
+ THE BAR
+-4 means an AT assessor would pass this line in an AT exam. This is not the Level 3 form. Mark holds Level 3; competent, accurate Level 3 movement analysis is the starting point here, not a 3 or a 4. Chris has scored accurate, organized L3-grade analysis at 2 on every addressed line: the AT elements were only beginning to appear. When Chris-scored exemplars are in the context, they define the levels and override this paragraph.
++4 means an AT assessor would pass this line in an AT exam. This is not the Level 3 form: competent, accurate L3 movement analysis is the starting point, not a 3 or a 4 — Chris has scored it at 2 on every addressed line. Chris-scored exemplars in the context define the levels and override this paragraph.
+ 
+ THE UNIT — what counts as one instance of each line's essential element
+ - cause_effect: a COMPLETE connection — body movement and/or fundamental → ski performance (what the ski does on the snow) → outcome (${OUTCOMES.join(', ')}) — with the mechanism stated (how_stated), relevant to the desired outcome, and prioritized. connection_stats counts these for you; connections[].complete marks them. A chain that ends in a body state, or that asserts "X caused Y" without the how, is a partial instance. Fundamental-to-fundamental relationships count when the effect of one on the other is explained.
+-- evaluate: TWO comparisons, each in terms of an outcome dimension: (a) the observed performance against the skier's own stated intent, and (b) that intent and/or the performance against what the task requires when skied well. comparison_to_intended_outcome.vs_intent and .vs_ideal record each as absent | partial | made; task.described says whether he stated what the task requires. A complete instance is both made (both_made). One made and the other partial or absent is a partial instance. Where the format has no peer, (b) alone is the unit. An accurate description of what was observed is not a comparison.
+-- prescription: a change chain — skier input → fundamental → effect on other fundamental(s) → ski performance → outcome on the task just observed — delivered at peer level as a brief coaching cue. Judge the chain by whether the links explain each other, not by whether the slots are filled.
+-- desired_performances: a description of what this task looks like skied well, with multiple fundamentals in blended relationship (desired_performance.stated). The predicted benefit of the prescription is not a description of ideal performance.
+-- biomechanics: a physics or biomechanics principle accurately applied to explain the observed performance and/or efficient skiing in general. Implied-but-accurate mechanism counts; vocabulary alone does not.
+-- equipment: a statement of how equipment affected THIS skier's observed performance toward the outcome, or interacts with the environment (equipment.states_effect_on_observed_performance). A recommendation, or the predicted benefit of a change, is not an instance — partial at most.
++- evaluate: TWO comparisons, each in an outcome dimension: (a) observed performance against the skier's own stated intent; (b) that intent and/or the performance against what the task requires skied well. comparison_to_intended_outcome.vs_intent / .vs_ideal record each as absent | partial | made; task.described says whether he stated the task's requirement. Complete = both made (both_made); one made and the other partial or absent = partial. With no peer, (b) alone is the unit. Describing what was observed is not a comparison.
++- prescription: a change chain — skier input → fundamental → effect on other fundamental(s) → ski performance → outcome on the task just observed — delivered at peer level as a brief coaching cue. Judge whether the links explain each other, not whether the slots are filled.
++- desired_performances: what this task looks like skied well, with multiple fundamentals in blended relationship (desired_performance.stated). The prescription's predicted benefit is not ideal performance.
++- biomechanics: a physics or biomechanics principle accurately applied to the observed performance and/or efficient skiing in general. Implied-but-accurate mechanism counts; vocabulary alone does not.
++- equipment: how equipment affected THIS skier's observed performance toward the outcome, or interacts with the environment (equipment.states_effect_on_observed_performance). A recommendation or the predicted benefit of a change is partial at most.
+ 
+ HOW THE SCALE COUNTS UNITS (unprompted first; prompted refinement adds, prompted creation caps the element at 4)
+-1 = no instance, complete or partial. 2 = partial instances only, or a single complete one among several partials — beginning to appear. 3 = appears, but not with consistency — some claims complete and others left partial, or complete only under probing. ONE complete instance and nothing else is a 3 at most, however clean it is. 4 = complete instances are the norm: the element recurs across the analysis, or — on a line that is naturally said once (the evaluate comparison, the prescription, desired performances, equipment) — the one instance is complete in every link AND threaded into the rest of the analysis (the cause it follows from, the outcome it returns to); accurate and specific to this skier, task, and phase. 5 = that, plus prioritization, economy, and depth beyond what the exam requires. 6 = continuous and superior.
++1 = no instance, complete or partial. 2 = partial instances only, or one complete among several partials — beginning to appear. 3 = appears, not consistently — some claims complete and others partial, or complete only under probing. ONE complete instance and nothing else is a 3 at most, however clean. 4 = complete instances are the norm: the element recurs, or — on a line naturally said once (the evaluate comparison, prescription, desired performances, equipment) — the one instance is complete in every link AND threaded into the rest of the analysis (the cause it follows from, the outcome it returns to); specific to this skier, task and phase. 5 = that, plus prioritization, economy and depth beyond the exam. 6 = continuous and superior.
+ 
+ PROCEDURE — for each of the six lines, climb from the bottom. Do not start from a number and confirm it.
+-1. State the evidence count: which extraction items are complete instances of this line's unit, which are partial, which are absent. Use the extraction's own fields and numbers. Use only relationships Mark made; never relate two extraction items yourself (for example, do not set his observation against the peer's intent if he did not).
+-2. Write the case for 2, then 3, then 4, then 5 — every rung, one or two sentences each, as an examiner would defend it for THIS session. A rung with no honest case says why in a few words ("No case: zero complete connections"). "No case needed" is never an acceptable entry. If even the case for 2 fails, write the case for 1.
+-3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not. When exemplars are in the context, an exemplar line bounds the rung, never sets it: weaker or equal evidence than a line Chris scored N cannot exceed N; stronger evidence scores at least N, and any rung above N must be earned on the scale by its own case — never "N plus the differences". Record the bound in exemplar_anchor.
++1. State the evidence count: which extraction items are complete instances of this line's unit, which partial, which absent, using the extraction's own fields and numbers. Use only relationships Mark made; never relate two extraction items yourself (e.g. his observation against the peer's intent, if he did not).
++2. Write the case for 2, then 3, 4, 5 — every rung, one or two sentences, as an examiner would defend it for THIS session. A rung with no honest case says why in a few words ("No case: zero complete connections"); "No case needed" is never acceptable. If the case for 2 fails, write the case for 1.
++3. The score is the highest rung whose case survives the rung below it being true as well — you cannot hold a 4 if the honest case for 3 is already strained. State in score_rationale which rung holds and why the next one up does not. When exemplars are in the context, place this session against EVERY exemplar on each line (exemplar_bounds) and summarize the closest in exemplar_anchor. An exemplar line bounds the rung, never sets it: weaker or equal evidence than a line Chris scored N cannot exceed N; stronger scores at least N, and any rung above N is earned on the scale by its own case — never "N plus the differences".
++   Weaker / equal / stronger are judged on the unit's GRADED fields only: complete where the exemplar had none (or the reverse); made vs partial vs absent on a comparison; unprompted vs prompted; a link (ski performance, outcome, how, biomechanics, desired performance) present where the exemplar's was missing. More claims, partials, outcome dimensions, fundamentals, physics concepts, words or detail is NOT stronger — volume is not depth. Matching graded fields = EQUAL even when counts differ; "comparable" is equal. Equal is a ceiling, enforced in code after you answer: name the relation honestly and put the real difference, if any, in the difference field.
+ 4. A fault Chris has named (in any Chris statement in the context) applies at every rung, not only as a ceiling on 5.
+-5. Cite the chunks that informed the decision as "c:xxxxxxxx" ids, exactly as they appear in the context. Cite Chris first where he speaks to the line. Never cite an id that is not in the context.
+-6. gap_to_next: one concrete move from this level to the next, in the form "Instead of X, say Y, because Z". X is something MARK said — never peer_restated, peer_answers, or an examiner's question. If he said nothing on the line, X is "leaving <the element> unsaid".
++5. Cite the chunks that informed the decision as "c:xxxxxxxx" ids exactly as they appear in the context, Chris first where he speaks to the line; never an id not in the context.
++6. gap_to_next: one concrete move to the next level, "Instead of X, say Y, because Z". X is something MARK said — never peer_restated, peer_answers or an examiner's question; if he said nothing on the line, X is "leaving <the element> unsaid".
+ 
+ STANDING RULES — guard against scoring too low
+ - Criteria are evidence descriptors, not checklists. Depth of work determines the level, not whether every term appears.
+-- Opportunities describe where to focus next; they never lower the current score.
++- Opportunities say where to focus next; they never lower the score.
+ - Locate gaps on the scale: a gap between 4 and 5 does not make a 3.
+-- Prompted refinement (Mark showed it, the examiner deepened it) is additive. Prompted creation (the examiner had to surface it) caps that element at 4.
++- Prompted refinement (Mark showed it, the examiner deepened it) adds; prompted creation (the examiner surfaced it) caps the element at 4.
+ - Fitts & Posner as Chris uses it: does it appear? is it consistent? 4 = appears regularly.
+ - Implied physics through an accurate description of the mechanism counts as demonstrated.
+-- Concise, precise, expert-to-expert delivery rates higher than verbose coverage. Phase-by-phase is optional. A single primary fundamental is not required; blended fundamentals are legitimate.
+-- Metacognition need not be stated; the behavior is the evidence.
+-- Cognitive-level check: Apply ≈ 3, Analyze ≈ 4, Evaluate/Create ≈ 5. If the cognitive level contradicts the score, the cognitive level wins.
++- Concise, precise, expert-to-expert delivery rates higher than verbose coverage. Phase-by-phase is optional; blended fundamentals are legitimate, a single primary one is not required.
++- Metacognition need not be stated; behavior is evidence.
++- Cognitive-level check: Apply ≈ 3, Analyze ≈ 4, Evaluate/Create ≈ 5; if it contradicts the score, it wins.
+ 
+ STANDING RULES — guard against scoring too high
+-- Naming is not connecting. Mentioning fundamentals, skills, or body movements without a stated connection to a change in ski performance and to an outcome (${OUTCOMES.join(', ')}) is not cause-and-effect evidence. Count connections[] whose links are present, not fundamentals mentioned.
+-- A line that is not addressed scores 1. If equipment.addressed is false, Equipment is 1; general ski vocabulary is not equipment analysis. Likewise any line whose essential element is absent.
+-- "Beginning to appear" is a 2, not a 3. One partial instance is a 2.
+-- Accurate but generic is Level 3 work. AT-level requires prioritization and specificity to this skier, this task, this phase.
++- Naming is not connecting. Fundamentals, skills or body movements without a stated connection to a change in ski performance and to an outcome are not cause-and-effect evidence. Count connections[] whose links are present, not fundamentals mentioned.
++- A line not addressed scores 1: equipment.addressed false ⇒ Equipment 1 (general ski vocabulary is not equipment analysis); likewise any line whose essential element is absent.
++- "Beginning to appear" is a 2, not a 3; one partial instance is a 2.
++- Accurate but generic is Level 3 work; AT requires prioritization and specificity to this skier, task and phase.
+ - Volume is not depth.
+-- Each definition names its essential elements. Score against those, not against general competence.
++- Score against each definition's essential elements, not general competence.
+ 
+ TYPE AWARENESS
+-ma_type at_exam has two audiences (peer: what/how in plain language; examiner: technical why). Every other type has one audience, the examiner: never penalize missing peer dialog, peer delivery, or intent verification where the format has no peer. Private notes are observation only.
++ma_type at_exam has two audiences (peer: what/how in plain language; examiner: technical why). Every other type has one, the examiner: never penalize missing peer dialog, delivery or intent verification where there is no peer. Private notes are observation only.
+ 
+ LEGACY DIAGNOSTICS
+-Also give 1–6 for ${LEGACY_CRITERIA.join(' and ')} with a one-sentence rationale each. They are not lines on the 2026 form and do not affect the result; they are kept for history. No level cases needed.
++Also give 1–6 for ${LEGACY_CRITERIA.join(' and ')} with a one-sentence rationale each — not 2026 lines, kept for history, no level cases.
+ 
+ CONFLICTS
+-If two Chris statements in the context genuinely conflict on a point that affected a score, follow the more recent and list the pair in chris_conflicts.
++If two Chris statements genuinely conflict on a point that affected a score, follow the more recent and list the pair in chris_conflicts.
+ 
+ OUTPUT — return ONLY this JSON object, no prose, no code fences:
+ {
+@@ -99,7 +108,8 @@ OUTPUT — return ONLY this JSON object, no prose, no code fences:
+   "justifications": { "<each of the six scored lines>": { "2": "...", "3": "...", "4": "...", "5": "...", "1": "only if the case for 2 fails" } },
+   "citations": { "<each of the six scored lines>": ["c:xxxxxxxx"] },
+   "gap_to_next": { "<each of the six scored lines>": "Instead of X, say Y, because Z" },
+-  "exemplar_anchor": { "<each of the six scored lines>": "c:xxxxxxxx <line>: Chris N — this session weaker | equal | stronger on the unit because …; bound: ≤N | ≥N (omit when the context has no exemplars)" },
++  "exemplar_anchor": { "<each of the six scored lines>": "c:xxxxxxxx <line>: Chris N — weaker | equal | stronger because …; bound: ≤N | ≥N (closest exemplar; omit when none in context)" },
++  "exemplar_bounds": { "<each of the six scored lines>": [{ "exemplar": "c:xxxxxxxx", "chris": 0, "relation": "weaker | equal | stronger", "difference": "graded-field difference, or none" }] },
+   "did_well": ["2–4 items, specific, quoting Mark where possible"],
+   "opportunity": ["2–4 items, highest leverage first"],
+   "key_learning": "the single most important thing for Mark to take from this session, in Chris's frame where he has supplied one",
+diff --git a/lib/score.js b/lib/score.js
+index 4225328..70d4486 100644
+--- a/lib/score.js
++++ b/lib/score.js
+@@ -12,6 +12,29 @@ const clampScore = (v) => { const n = Math.round(Number(v)); return Number.isFin
+ const avg = (xs) => Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100;
+ const normCite = (c) => { const m = String(c).match(/([0-9a-f]{8})/i); return m ? m[1].toLowerCase() : null; };
+ 
++/**
++ * Exemplar bound, enforced (v2-rag-5). For one line: every entry in exemplar_bounds whose exemplar is in the context's
++ * exemplar slot and whose relation is equal or weaker sets a ceiling at Chris's number FOR THAT LINE — read from the
++ * exemplar's stored scorecard, never from the evaluator. Returns { score, bounds, guard } — `guard` is a message when
++ * the score was lowered, null otherwise. A floor is not enforced: "stronger" was the direction that inflated scores.
++ */
++export function exemplarBound(line, score, rawBounds, chunkIndex) {
++  const entries = Array.isArray(rawBounds) ? rawBounds : [];
++  const bounds = [];
++  let ceiling = Infinity, by = null;
++  for (const e of entries) {
++    const id = normCite(e?.exemplar);
++    const c = id && chunkIndex[id];
++    const rel = String(e?.relation || '').toLowerCase();
++    const chris = c?.slot === 'exemplars' ? Number(c.scores?.[line]) : NaN;
++    const ok = !!c && c.slot === 'exemplars' && Number.isFinite(chris) && ['weaker', 'equal', 'stronger'].includes(rel);
++    bounds.push({ exemplar: id ? `c:${id}` : String(e?.exemplar || ''), chris: Number.isFinite(chris) ? chris : null, stated_chris: e?.chris ?? null, relation: rel || null, difference: e?.difference || '', valid: ok });
++    if (ok && rel !== 'stronger' && chris < ceiling) { ceiling = chris; by = `c:${id}`; }
++  }
++  if (score > ceiling) return { score: ceiling, bounds, guard: `${line}: model gave ${score} while calling the evidence ${bounds.find((b) => b.exemplar === by).relation} to exemplar ${by} (Chris ${ceiling}) ⇒ ${ceiling}` };
++  return { score, bounds, guard: null };
++}
++
+ /**
+  * Validate and complete the model's output. Pure; unit-tested offline.
+  * - scores clamped to 1–6; a missing scored line is an error (never silently defaulted)
+@@ -33,6 +56,13 @@ export function normalizeResult(raw, { extraction, chunkIndex }) {
+     out.scores.equipment = 1;
+   }
+ 
++  out.exemplar_bounds = {};
++  for (const k of SCORED_CRITERIA) {
++    const b = exemplarBound(k, out.scores[k], raw.exemplar_bounds?.[k], chunkIndex);
++    out.exemplar_bounds[k] = b.bounds;
++    if (b.guard) { guards.push(b.guard); out.scores[k] = b.score; }
++  }
++
+   out.section_averages = { ma: avg(SCORED.ma.map((k) => out.scores[k])), tu: avg(SCORED.tu.map((k) => out.scores[k])) };
+   out.meets_standards = out.section_averages.ma >= PASS && out.section_averages.tu >= PASS;
+ 
+@@ -112,13 +142,15 @@ export function normalizeLine(raw, { line, extraction, chunkIndex }) {
+   let score = clampScore(raw.scores?.[line]);
+   if (score == null) throw new Error(`evaluator returned no score for: ${line}`);
+   if (line === 'equipment' && extraction?.equipment && extraction.equipment.addressed === false && score > 1) { guards.push(`equipment: model gave ${score}; not addressed ⇒ 1`); score = 1; }
++  const eb = exemplarBound(line, score, raw.exemplar_bounds?.[line], chunkIndex);
++  if (eb.guard) { guards.push(eb.guard); score = eb.score; }
+   const ids = [...new Set((raw.citations?.[line] || []).map(normCite).filter(Boolean))];
+   const ok = ids.filter((id) => chunkIndex[id]);
+   const j = raw.justifications?.[line] || {};
+   return {
+     line, score,
+     score_rationale: raw.score_rationale?.[line] || '', evidence_count: raw.evidence_count?.[line] || '',
+-    justifications: j, gap_to_next: raw.gap_to_next?.[line] || '', exemplar_anchor: raw.exemplar_anchor?.[line] || '',
++    justifications: j, gap_to_next: raw.gap_to_next?.[line] || '', exemplar_anchor: raw.exemplar_anchor?.[line] || '', exemplar_bounds: eb.bounds,
+     citations: ok.map((id) => `c:${id}`),
+     citation_details: Object.fromEntries(ok.map((id) => { const c = chunkIndex[id]; return [`c:${id}`, { author: c.author, source: c.source, date: c.date, type: c.type, source_ref: c.source_ref, title: c.title, text: c.text.length > 400 ? `${c.text.slice(0, 400)}…` : c.text }]; })),
+     quality: { citations_invalid: ids.length - ok.length, ladder_skipped: ['2', '3', '4'].some((l) => !j[l] || /no case needed/i.test(j[l])), guards_applied: guards },
+diff --git a/scripts/selftest-score.mjs b/scripts/selftest-score.mjs
+index 77a910f..5ff2384 100644
+--- a/scripts/selftest-score.mjs
++++ b/scripts/selftest-score.mjs
+@@ -98,4 +98,36 @@ const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['
+ assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);
+ assert.equal(ne.citation_details['c:0000aaaa'].type, 'exemplar');
+ assert.deepEqual(n.quality.exemplars_cited, [], 'no exemplars in context → none cited, no error');
++
++// ── v2-rag-5: the exemplar bound is enforced in code, on Chris's number as stored, never on volume or on the evaluator's arithmetic ──
++{
++  const { exemplarBound, normalizeLine } = await import('../lib/score.js');
++  const bidx = { ...idx,
++    '0000aaaa': { ...idx['0000aaaa'], scores: { cause_effect: 2, evaluate: 2, prescription: 3, desired_performances: 2, biomechanics: 3, equipment: 3 } },
++    '0000bbbb': { id: '0000bbbb-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-23', type: 'exemplar', source_ref: 'session:sjm4bip', title: 't', text: 'EX2', scores: { cause_effect: 3, evaluate: 2, prescription: 2, desired_performances: 3, biomechanics: 2, equipment: 2 } },
++    '0000cccc': { id: '0000cccc-x', slot: 'chris', source: 'chris_zoom', author: 'chris', date: '2026-09-24', type: 'principle', source_ref: 'zoom:2026-09-24', title: null, text: 'not an exemplar' },
++  };
++  // the 7uk7lnh Evaluate case: "comparable or slightly stronger" against a both_made line Chris scored 2, then 3 — equal is a ceiling
++  let b = exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', chris: 2, relation: 'equal', difference: 'none' }], bidx);
++  assert.equal(b.score, 2); assert.match(b.guard, /equal to exemplar c:0000aaaa \(Chris 2\) ⇒ 2/);
++  // weaker clamps too; stronger never lowers, and never raises (no floor in code)
++  assert.equal(exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', relation: 'weaker' }], bidx).score, 2);
++  assert.equal(exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', relation: 'stronger', difference: 'complete where exemplar had none' }], bidx).score, 3);
++  assert.equal(exemplarBound('evaluate', 1, [{ exemplar: 'c:0000aaaa', relation: 'stronger' }], bidx).score, 1, 'no floor');
++  // the ceiling is the LOWEST equal/weaker exemplar's number, per line, read from the exemplar — a misreported chris value is ignored
++  b = exemplarBound('cause_effect', 3, [{ exemplar: 'c:0000bbbb', chris: 3, relation: 'equal' }, { exemplar: 'c:0000aaaa', chris: 5, relation: 'equal' }], bidx);
++  assert.equal(b.score, 2); assert.equal(b.bounds[1].chris, 2); assert.equal(b.bounds[1].stated_chris, 5);
++  // a non-exemplar id, an unknown id, or a garbage relation is recorded invalid and bounds nothing
++  b = exemplarBound('prescription', 4, [{ exemplar: 'c:0000cccc', relation: 'equal' }, { exemplar: 'c:deadbeef', relation: 'weaker' }, { exemplar: 'c:0000aaaa', relation: 'about the same' }], bidx);
++  assert.equal(b.score, 4); assert.deepEqual(b.bounds.map((x) => x.valid), [false, false, false]);
++  // under-scores are untouched: the three lines where the baseline scored below Chris all had equal/weaker anchors and scores already ≤ N
++  assert.equal(exemplarBound('biomechanics', 2, [{ exemplar: 'c:0000aaaa', relation: 'equal' }, { exemplar: 'c:0000bbbb', relation: 'weaker' }], bidx).score, 2);
++  // wired into normalizeResult and normalizeLine, logged as a guard, section averages recomputed after the clamp
++  const nr = normalizeResult({ ...raw, exemplar_bounds: { evaluate: [{ exemplar: 'c:0000aaaa', chris: 2, relation: 'equal', difference: 'none' }] } }, { extraction: x, chunkIndex: bidx });
++  assert.equal(nr.scores.evaluate, Math.min(raw.scores.evaluate, 2)); assert.equal(nr.exemplar_bounds.evaluate.length, 1);
++  if (raw.scores.evaluate > 2) { assert.ok(nr.quality.guards_applied.some((g) => /^evaluate: model gave/.test(g))); assert.equal(nr.section_averages.ma, Math.round(((nr.scores.cause_effect + 2 + nr.scores.prescription) / 3) * 100) / 100); }
++  const nl = normalizeLine({ scores: { evaluate: 3 }, citations: { evaluate: [] }, justifications: { evaluate: { 2: 'a', 3: 'b', 4: 'c' } }, exemplar_bounds: { evaluate: [{ exemplar: 'c:0000bbbb', relation: 'equal' }] } }, { line: 'evaluate', extraction: x, chunkIndex: bidx });
++  assert.equal(nl.score, 2); assert.equal(nl.exemplar_bounds[0].chris, 2);
++  assert.ok(/volume is not depth/.test(ES) && /"comparable" is equal/.test(ES) && /exemplar_bounds/.test(ES));
++}
+ console.log('selftest-score: all checks passed');
+-- 
+2.43.0
+

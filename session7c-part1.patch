@@ -1,0 +1,310 @@
+From 3b790b2fee09d69dc8be286377f7a39c05d3c212 Mon Sep 17 00:00:00 2001
+From: claude <claude@local>
+Date: Fri, 25 Sep 2026 15:22:38 +0000
+Subject: [PATCH] Session 7c part 1: session-stamp CLI, score --label/--reuse
+ fallback, ab-report, doc
+
+---
+ AT_Scoring_Architecture.md |  4 ++-
+ lib/assembler.js           |  4 +--
+ lib/store.js               | 24 ++++++++++++++
+ package.json               |  6 ++--
+ scripts/ab-report.mjs      | 64 ++++++++++++++++++++++++++++++++++++++
+ scripts/score.mjs          | 26 ++++++++++++----
+ scripts/tag-sessions.mjs   | 45 +++++++++++++++++++++++++++
+ 7 files changed, 162 insertions(+), 11 deletions(-)
+ create mode 100644 scripts/ab-report.mjs
+ create mode 100644 scripts/tag-sessions.mjs
+
+diff --git a/AT_Scoring_Architecture.md b/AT_Scoring_Architecture.md
+index f1b1492..1dce0a4 100644
+--- a/AT_Scoring_Architecture.md
++++ b/AT_Scoring_Architecture.md
+@@ -1,6 +1,6 @@
+ # AT Development Journal — Scoring System Architecture
+ 
+-**Status:** Building — sessions 1–4 done; session 5 deployed, **one done-when item open: Chris scores a session blind in the new app (away ~1 week)**; session 6: exemplars live and cited (6a: 6/12 exact · 12/12 within one); 6b failed on the blind session (Evaluate +2), 6c (`v2-rag-4` + evidence guards) live-checked — anchors and Equipment fixed, **Evaluate still +2 on 7uk7lnh pending Chris's two Evaluate chunks; template frozen until the third scorecard** (37 Chris statements from the 9/18 call still pending his approval); session 7 (Journal tab) built and verified offline — **done-when open: needs an `entryType` header added to the Journal sheet and Chris's real address in `_MENTOR_PROFILES` (§17), then six entries, Chris's depth read, the email**; next is 8
++**Status:** Building — sessions 1–6 live; 7 built (done-when open on `entryType` header, Chris's address, six entries, depth read, email); 7b live; 8 live (agreement half met; open: `MENTOR_TOKEN`, Chris's approval pass — **done 2026-09-25: pending queue 0, 9/18 + 9/24 approved**); **7c (calibration) in progress** — three blind cards, 18 lines: exact 5 · within-one 17 · AI over on 12 of 13 misses; step 1 (session-stamp the 9/24 call) and step 2 (baseline on the approved store) tooled, awaiting Mark's live runs; template still `v2-rag-4`; next is 9
+ **Owner:** Mark Anderson
+ **Ground truth:** Chris (AT Assessor)
+ **Purpose of this doc:** Every build session reads this first. It holds every decision and its reason so nothing gets re-derived or re-argued.
+@@ -441,6 +441,7 @@ One project, one sequence. Backend and frontend alternate so each session is one
+ | **7** | Frontend | **Journal tab** — six entry types, adaptive prompts, connection tags, theme tags, mentor depth assessment (change/deselect), comments, Challenge Me | Mark creates one entry of each type; Chris assesses depth; notification email fires |
+ | **7b** | Backend | **Operational data to Supabase Postgres** (added 2026-09-24 after hotfixes 4–7 showed the Apps Script serialises every read behind the 400 KB MASessions tab and cannot carry a second user). `ops_rows` (one jsonb row per Sheet row, `(sheet,id)` key), `lib/ops.js` (the Apps Script contract: `getAll` / `update` upsert / `create` / `delete` / `notify` / `ping`), `api/sheet.js` rewritten on it (same request/response shapes, function count stays 12), `lib/sheet.js` reads the store directly, `notify` → Resend, `scripts/migrate-sheet.mjs` (copy + row-for-row verify, rerunnable), `old-app/api/sheet.js` drop-in so the old app shares the store, `SESSION7B_RUNBOOK.md`. | Migration diff empty; both apps load from Postgres; a cold login is under 3 s; a journal entry and an MA comment round-trip and are visible from the other app; a rescore reads the session from Postgres. |
+ | **8** | Frontend | **Progress tab** — mentor assessments, AI analysis, **recurring coaching gaps across sessions** (added 2026-09-19), **Agreement panel** (§12.4), **Zoom approval view** (§12.3) | Chris approves chunks from session 2's transcript; agreement panel shows session 6 data. **Chris switches to the new app after this session.** |
++| **7c** | Backend | **Calibration** (added 2026-09-25, from §17 "calibration session after 8"). Preconditions met: three blind Chris cards (`7uk7lnh`, `sjm4bip`, `a5v6zxm`), 9/18 and 9/24 calls approved, pending 0. Builds: `scripts/tag-sessions.mjs` + `store.stampSessionId` (session-stamp an already-ingested call by time range — the 9/24 ingest ran without `--sessions`, so its 26 session-specific chunks would leak into `sjm4bip`'s rescore); `score.mjs --label` + `--reuse` fallback to the exemplar's stored extraction; `scripts/ab-report.mjs` (18-line matrix per variant, per-call retrieval counts, self-leak check); manifest chunks carry `session_id`. Then, in order: **baseline** — `--reuse` on all three with `v2-rag-4` against the approved store (Chris's own Evaluate / desired-outcome statements are now retrievable; none of the three saw them); only if a systematic +1 survives, A/B the two §17 candidates (desired-outcome gate; C&E "one run's worth is a chain") on the same fixed extractions, adopted only if neither regresses any of the 18 lines. Re-ingest `7uk7lnh`'s exemplar post-6c (open 6c follow-up). | Baseline recorded per line in §16 with what each run retrieved; each candidate adopted or rejected with the 18-line numbers; template version bumped only if a candidate wins; §17 calibration items closed or restated. |
+ | **9** | Frontend | **Themes** (add/edit/delete/depth), **Checkpoints** (pre-populate, coaching notes sync), **Videos** | Feature parity with old app for all three |
+ | **10** | Frontend | **Growth**, **Timeline**, **Clinics**, **Resources**, **Profile** | Feature parity; old app retired |
+ | **11** | Feature | **Examiner Sparring** mode (strict examiner character, one probe at a time, 3–4 exchanges, "OK, thank you" ending) + **dual-examiner Debrief** | Mark runs a sparring session and receives the debrief; saved to MA History |
+@@ -517,6 +518,7 @@ Recorded so they aren't re-argued.
+ 
+ *(append one line per build session: date · session # · built · decided · deferred)*
+ 
++- **2026-09-25 · Session 7c (backend — calibration), part 1: tooling + prereq check** · Mark: prereqs done. Verified live, not from the doc: pending 0; `zoom:2026-09-24` 32 chunks approved by Chris (14:39–14:45); 9/18 batch cleared; three blind cards with exemplars (`a5v6zxm`, the 9/21 session, submitted blind 9/25 with `ai_at_submit` — closes the "post the 9/21 verbal card" item as a real blind card). Agreement (blind): 18 lines, exact 5 (27.8%), within-one 17 (94.4%), AI over on 12 of 13 misses, mean +0.67; `v2-rag-4` alone 2/12 exact, 12/12 within-one, 9 over; Evaluate +1 to +2 on every session; `a5v6zxm` is 3 vs Chris's 2 on five lines. **Prereq gap found:** the 9/24 chunks carry no `metadata.session_id` — the ingest ran without `--sessions` — so Chris's spoken critique of `sjm4bip` (10:51 "your first question", 24:29 his model prescription for that skier, 33:48 "in the third paragraph", 37:45 "your biomechanics and physics were very light", 38:46 equipment, 51:02) would be retrieved by that session's own rescore. · Built: `store.stampSessionId` (provenance only — text, tags, embedding, approval untouched; refuses to overwrite a different id without `--force`), `scripts/tag-sessions.mjs` (ranges → stamp, dry run, same `normalizeSessions` as ingest); ranges by the 9/18 precedent (general stretches stay untagged): `00:00:00–00:25:10`, `00:33:20–00:44:00`, `00:50:40–00:52:35` → `sjm4bip` = 26 of 32; the six form principles 25:15–32:29 stay retrievable for all sessions. `score.mjs --label <x>` writes `out/score-<id>.<x>.json` and leaves the base file alone; `--reuse` without a base file takes the extraction stored with Chris's exemplar. `scripts/ab-report.mjs` prints the 18-line matrix per variant, retrieval by call, exemplars shown/cited, and flags a self-leak on either provenance field; assembler manifest chunks now carry `session_id`. `npm run tag:sessions`, `npm run ab`. Selftests score / ingest pass. · **Not run here (no keys):** the stamp, the 7uk7lnh re-ingest, the three baseline runs — Mark runs them (order in the reply); part 2 records the baseline and decides on A/B. · Decided: stamping `session_id` on an approved chunk is provenance, not an edit — it is what `--sessions` would have written at ingest; logged, not silent. Template untouched until the baseline is read.
+ - **2026-09-24 · Session 8 — live check** · Deployed from `main` (`5ba50f1`). Mark: Progress tab shows the 2026-scored sessions in trends and recurring gaps, Agreement shows Chris's blind card on `7uk7lnh` (3/6 · 5/6), and as Chris the 37 pending statements from `zoom:2026-09-18` are listed with 42:23 and 49:35 starred first. **Agreement half of done-when met.** Open: `MENTOR_TOKEN` on Vercel; Chris's first approval pass (his action — closes the session and moves him to the new app).
+ - **2026-09-24 · Session 8 (frontend — Progress)** · Mark: add where the mentor wants him challenged or pushed. · Built: `src/lib/progress.js` (pure), `src/lib/cites.js` (citation readers out of `Rationale.jsx`), `tabs/Progress.jsx`, `tabs/AgreementPanel.jsx`, `tabs/ChunkApproval.jsx`; `App.jsx` adds the tab for both roles. **Development Assessment:** four fields — the fourth, `challenge` ("Where to challenge or push"), is stored in the same `_MENTOR_ASSESSMENTS` blob, rendered to the `mentor_assessment` chunk by `bootstrap.mjs`, and fed to the examiner through `mentorGapsBlock` ("push him on — …"). Writes are per mentor: re-read the live blob, merge this mentor's four fields, write the one Config column (the old app wrote the whole blob from memory on every keystroke); autosave 1.5 s, no-change → no write, another device's change taken only while nothing is being typed. **AI analysis** (mentor): `ASSESSMENT_SYSTEM` / `buildAssessmentUser` / `parseAssessmentReply` in `prompts.js` — built from `assessmentContext()`: his own scorecards with the AI's beside them on sessions he has scored, the evaluator's gap lines on those (labelled AI), sessions he has not scored give date, task and Mark's words and **no number**; old-scorer numbers never shown; journal with depth reads and comments; four sections, each with an "append to my field" button; nothing saved until it is in his fields. **Trends:** 2026-form cards only via `scorecard(session,{viewer})`, oldest → newest, Chris's number under the AI's where he scored; old-scorer sessions in a collapsed labelled list, never mixed; a mentor sees only the sessions he has scored and is told how many are withheld. **Recurring gaps:** every `gap_to_next` grouped by line, newest first, lowest average first; a line recurs at ≥2 sessions, "same gap every time" when the because-clauses share ≥3 content words, theme = the shared words; the first Chris citation under each; sealed sessions contribute nothing. **Agreement (§12.4):** `/api/agreement` drawn as blind headline (exact / within-one / same result against the §1 targets), not-blind reported and not counted, per-line table with lean and mean Δ, inline-SVG trend over the window, by-scorer line, per-session deltas, excluded list; a mentor can only request `mentor=<himself>`; the candidate switches between Chris / Gates / Mike. **Zoom approval (§12.3):** pending grouped by call, the 42:23 and 49:35 statements starred first (`PRIORITY`, one-off), each with timestamp / type / hedged (+note) / check-speaker / watch / criteria / skills chips, the cleaned text with **Heard:** (verbatim `quote`) and the ASR fixes under it, a bracket warning, context on the call, "Replaces an earlier statement?" candidates with the §5.6 rule stated; Approve (with edits and replaces), Edit (stays pending; type, lines, skills, clears hedged), Delete (confirm), bulk-approve of selected; the candidate sees the list and may delete; decisions tallied per type in the browser (§17 "extraction quality"). **Auth (§17):** `requireToken` in `lib/http.js` — `MENTOR_TOKEN` checked as `X-AT-Token` (or `?token=`) on `chunks/pending`, `chunks/approve`, `agreement`; unset = open and logged, `pending` reports `auth: "open"` and the tab shows it; 401 `{ auth: "required" }` → the tab asks for the code once and keeps it in localStorage; `api.js` sends it on every `/api` call. `chunks/search` gains `trim: true` (no metadata). Function count still 12. · Verified offline: `npm run test:progress` (8 groups — incl. the 9/18 comparison reproduced through `agreementView`, no AI number for a sealed session in trends / gaps / AI-analysis context, token gate open/401/header/query); `npm run render:progress` (16 checks as Mark, Chris, Gates — Chris's page never carries the unscored session's name with a score, agreement locked to himself; Gates sees no number at all); history / exam / score / ingest / zoom / journal / ops selftests; `vite build` clean (333 KB). `AT_Mentor_Guide.md` rewritten for the new app (blind scoring, four fields, approval, agreement, access code) and checked into the repo. · **Not verified here (no keys, no deploy): every live call** — `MENTOR_TOKEN` set on Vercel; Chris entering the code; his approvals of the 37 pending chunks (42:23 and 49:35 first); the agreement panel against the live store (it needs `ingest:scores` to have run — session 6); the AI analysis call. Done-when open until Chris approves and the panel shows the two cards. · Decided: shared `MENTOR_TOKEN` is the session-8 auth (per-user signed login stays in §17); the fourth field goes to the examiner now, to the pre-exam brief and Challenge Me later (§17). · Deferred: see §17.
+ - **2026-09-24 · Session 7b (backend — operational data to Postgres)** · Mark: MA History keeps failing to load; go step by step. §15 row 1 amended (see the row); §13 row 7b added. · Built: `supabase/schema-ops.sql` (`ops_rows`: `sheet`, `id`, `row` jsonb, `seq`; RLS on, service key only; `npm run migrate` now runs both schema files); `lib/ops.js` — the Apps Script contract on Postgres: `getAll` returns every row with every column (`DEFAULT_HEADERS` ∪ keys seen, `''` when empty, insertion order), `update` merges only the keys sent and creates on a new id, `create` is the same upsert, `delete` hard-deletes and answers `Row not found with id: …`, `notify` reads `_MENTOR_PROFILES` and sends through Resend (`RESEND_API_KEY`, `RESEND_FROM`) or reports "No email provider configured" without failing; values coerced to text (objects → JSON); the live MASessions `b`-for-`id` header folded into `id` on read and never stored (§17 item closed); a memory adapter with the same semantics for tests and dry runs. `api/sheet.js` rewritten on it (Apps Script proxy archived as `archive/sheet-appsscript.js`): 200 `{ error }` for the script's own errors, 502 for a store failure so the client's transient retry still applies, `maxDuration` 30. `lib/sheet.js`: `getAll` reads the store directly when `SUPABASE_URL` is set (scorer, agreement, ingest, bootstrap, CLIs — no HTTP hop, no retries), `{ via: 'http' }` keeps the Apps Script path for the migration. `scripts/migrate-sheet.mjs` (`--dry` / copy + verify / `--verify` / `--from <dir>`): reads the three tabs through the old app's proxy, refuses a tab with duplicate ids, batch-upserts, reads back from Postgres and diffs every row and column, writes `out/migrate-sheet-report.json`. `src/api.js`: reads no longer queue behind each other (writes still do). `old-app/api/sheet.js` — self-contained drop-in (generated by `scripts/build-old-app-sheet.mjs`) so the old app shares the store until session 10. `SESSION7B_RUNBOOK.md` — nine steps, each with a check, rollback at both stages. · Verified offline: `npm run test:ops` (contract shapes; per-column update; create never duplicates; header fill and order; `b` handling both ways; `src/api.js` untouched — stale-copy journal save keeps Chris's depth read and Gates's comment, pulse deselect, deleted-entry guard, MA per-column writes with the `ma_` prefix; `lib/sheet.js` from the store; notify with and without a provider, one bounced address; endpoint status codes); journal / history / exam / score / ingest / zoom selftests; `vite build` clean. · **Live (2026-09-24 evening, Mark ran the runbook step by step):** `ops_rows` created; dry run found three ids duplicated in the Sheet (`vid_qwn6hc1` identical ×2; `ma_c6m1h8t` ×2 and `ma_sgxy06c` ×3, differing only in the April-era `data` blob that the first copy carried) — the old create-after-failed-update path; script upgraded to collapse identical copies and resolve differing ones with `--keep first`. Copy with `--keep first`: Config 11 · Journal 3 · MASessions 15, diff none on every row and column; the Apps Script needed 197 s and five retries to hand over MASessions, Postgres wrote it in 0.6 s and read it back in 0.3 s. New app deployed: ping reports `store: postgres`, login under a second, `ma_7uk7lnh` intact. Journal entry + MA comment round-tripped to Postgres (`updated_at` moved on the one row only). Old app: `old-app/api/sheet.js` + `@supabase/supabase-js` pushed; first deploy returned zero rows for every sheet — the anon key had been pasted as `SUPABASE_SERVICE_KEY` and RLS silently hides everything from anon; fixed with the service_role key and a redeploy; then Journal 4 · MASessions 15 · Config 11 from both endpoints, and a comment posted in the old app appeared in the new one. **Done-when met.** Journal had 3 live rows, not the 4 noted on 9/19 — Mark to confirm nothing was expected there. `APP_BASE_URL` removed from `.env`. · Decided: five §15 rows. Function count 12 (`api/sheet.js` replaced, none added). · Deferred: see §17 (Sheet snapshot retirement; `_REFERENCE_MATERIALS` and other legacy Config rows carried as-is; auth item now also gates writes to Postgres).
+diff --git a/lib/assembler.js b/lib/assembler.js
+index a7ac6ef..dba2721 100644
+--- a/lib/assembler.js
++++ b/lib/assembler.js
+@@ -132,7 +132,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+     for (const c of s.taken) {
+       chunkIndex[shortId(c.id)] = {
+         id: c.id, slot, source: c.source, author: c.author, date: c.date, type: c.type, source_ref: c.source_ref,
+-        title: c.metadata?.title || null, similarity: c.similarity != null ? Number(c.similarity.toFixed(4)) : null,
++        title: c.metadata?.title || null, session_id: c.metadata?.session_id || null, similarity: c.similarity != null ? Number(c.similarity.toFixed(4)) : null,
+         text: c.text,
+       };
+     }
+@@ -162,7 +162,7 @@ export async function assemble(extraction, { sessionId = null, includeSelf = fal
+     chris_under_min: chrisSlot.taken.length < 5,     // §7.1 minimum 5 — a store-size fact until Zoom chunks land, surfaced not hidden
+     self_excluded: !includeSelf && !!sessionId,
+     skills_filter: skills,
+-    chunks: Object.fromEntries(Object.entries(chunkIndex).map(([k, v]) => [k, { slot: v.slot, source: v.source, author: v.author, date: v.date, source_ref: v.source_ref, similarity: v.similarity }])),
++    chunks: Object.fromEntries(Object.entries(chunkIndex).map(([k, v]) => [k, { slot: v.slot, source: v.source, author: v.author, date: v.date, source_ref: v.source_ref, session_id: v.session_id, similarity: v.similarity }])),
+   };
+   if (manifest.tokens.total > BUDGET.total) throw new Error(`assembler over budget: ${manifest.tokens.total} > ${BUDGET.total}`);
+ 
+diff --git a/lib/store.js b/lib/store.js
+index 6e0bbd8..84a3635 100644
+--- a/lib/store.js
++++ b/lib/store.js
+@@ -305,3 +305,27 @@ export async function deletePending(id) {
+   if (!data.length) throw bad(409, 'not found, or already approved (approved chunks are superseded, not deleted)');
+   return true;
+ }
++
++// ── Provenance stamp (session 7c) ─────────────────────────────────────────────────────────────────
++/**
++ * Set metadata.session_id on live chunks — what `sessions[]` at Zoom ingest would have written (§7.3.5).
++ * Provenance only: text, tags, embedding and approval are untouched, so this is not an edit of an approved
++ * chunk. Refuses to overwrite a DIFFERENT existing id unless `force`. Returns per-chunk outcomes.
++ */
++export async function stampSessionId(updates, { force = false } = {}) {
++  const out = [];
++  for (const { id, sessionId, label = null } of updates) {
++    const c = await getChunk(id);
++    if (!c) { out.push({ id, status: 'missing' }); continue; }
++    const cur = c.metadata?.session_id || null;
++    if (cur === sessionId) { out.push({ id, status: 'unchanged', session_id: cur }); continue; }
++    if (cur && !force) { out.push({ id, status: 'conflict', session_id: cur, wanted: sessionId }); continue; }
++    const metadata = { ...(c.metadata || {}), session_id: sessionId, session_stamped_at: new Date().toISOString() };
++    if (label) metadata.session_label = label;
++    if (cur) metadata.session_id_previous = cur;
++    const { error } = await client().from('chunks').update({ metadata }).eq('id', id);
++    if (error) throw error;
++    out.push({ id, status: cur ? 'replaced' : 'stamped', session_id: sessionId, previous: cur });
++  }
++  return out;
++}
+diff --git a/package.json b/package.json
+index e6f9b5b..7055f56 100644
+--- a/package.json
++++ b/package.json
+@@ -2,7 +2,7 @@
+   "name": "at-development-tracker",
+   "private": true,
+   "version": "1.1.0",
+-  "description": "Alpine Trainer Development Tracker — Mark · PSIA-RM · Keystone",
++  "description": "Alpine Trainer Development Tracker \u2014 Mark \u00b7 PSIA-RM \u00b7 Keystone",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+@@ -25,7 +25,9 @@
+     "migrate:sheet": "node scripts/migrate-sheet.mjs",
+     "test:ops": "node scripts/selftest-ops.mjs",
+     "test:progress": "node scripts/selftest-progress.mjs",
+-    "render:progress": "npx esbuild scripts/rendertest-progress.jsx --bundle --platform=node --format=esm --jsx=automatic --loader:.js=jsx --external:react --external:react-dom --outfile=_rtp.mjs --log-level=warning && node _rtp.mjs; rm -f _rtp.mjs"
++    "render:progress": "npx esbuild scripts/rendertest-progress.jsx --bundle --platform=node --format=esm --jsx=automatic --loader:.js=jsx --external:react --external:react-dom --outfile=_rtp.mjs --log-level=warning && node _rtp.mjs; rm -f _rtp.mjs",
++    "tag:sessions": "node scripts/tag-sessions.mjs",
++    "ab": "node scripts/ab-report.mjs"
+   },
+   "dependencies": {
+     "@anthropic-ai/sdk": "^0.52.0",
+diff --git a/scripts/ab-report.mjs b/scripts/ab-report.mjs
+new file mode 100644
+index 0000000..d767aae
+--- /dev/null
++++ b/scripts/ab-report.mjs
+@@ -0,0 +1,64 @@
++// Side-by-side report of scoring runs against Chris's blind scorecards — the calibration session's instrument.
++//   node scripts/ab-report.mjs --labels base,gate [7uk7lnh sjm4bip a5v6zxm]
++// Reads out/score-<id>.json for label "base" and out/score-<id>.<label>.json otherwise (as written by score.mjs --label).
++// Prints, per label: every line's AI / Chris / Δ, exact and within-one totals, signed mean Δ, over/under counts, and
++// what each run retrieved (Chris chunks by call, exemplars shown/cited, any self-chunk that leaked).
++import 'dotenv/config';
++import { existsSync, readFileSync } from 'node:fs';
++import { getMaSessions } from '../lib/sheet.js';
++import { mentorScores } from '../lib/mentorScores.js';
++import { SCORED_CRITERIA } from '../lib/vocab.js';
++
++const args = process.argv.slice(2);
++const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
++const labels = (opt('--labels') || 'base').split(',').map((s) => s.trim()).filter(Boolean);
++const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--labels').map((x) => x.replace(/^ma_/, ''));
++if (!ids.length) ids.push('7uk7lnh', 'sjm4bip', 'a5v6zxm');
++const SHORT = { cause_effect: 'CE', evaluate: 'Ev', prescription: 'Rx', desired_performances: 'DP', biomechanics: 'Bio', equipment: 'Eq' };
++
++const sessions = await getMaSessions();
++const cards = {};
++for (const id of ids) {
++  const s = sessions.find((x) => x.id === id);
++  const card = s && mentorScores(s).chris;
++  if (!card) { console.error(`${id}: no Chris scorecard`); process.exit(1); }
++  cards[id] = { scores: card.scores, blind: card.blind };
++}
++
++const file = (id, label) => (label === 'base' ? `out/score-${id}.json` : `out/score-${id}.${label}.json`);
++const totals = {};
++for (const label of labels) {
++  console.log(`\n═══ ${label} ═══`);
++  const t = { n: 0, exact: 0, w1: 0, over: 0, under: 0, sum: 0, per: Object.fromEntries(SCORED_CRITERIA.map((k) => [k, { n: 0, exact: 0, w1: 0, sum: 0 }])) };
++  for (const id of ids) {
++    const f = file(id, label);
++    if (!existsSync(f)) { console.log(`  ${id}: ${f} missing`); continue; }
++    const r = JSON.parse(readFileSync(f, 'utf8'));
++    if (!r.scores) { console.log(`  ${id}: ${f} holds no score (extraction only)`); continue; }
++    const c = cards[id].scores;
++    const cells = SCORED_CRITERIA.map((k) => {
++      const ai = r.scores[k], ch = c[k];
++      if (ai == null || ch == null) return `${SHORT[k]} ${ai ?? '–'}/${ch ?? '–'}   `;
++      const d = ai - ch; t.n++; t.sum += d; t.per[k].n++; t.per[k].sum += d;
++      if (d === 0) { t.exact++; t.per[k].exact++; } if (Math.abs(d) <= 1) { t.w1++; t.per[k].w1++; } if (d > 0) t.over++; if (d < 0) t.under++;
++      return `${SHORT[k]} ${ai}/${ch} ${d === 0 ? ' ·' : d > 0 ? `+${d}` : d}`;
++    });
++    const m = r.meta?.context || {};
++    const byCall = {};
++    for (const ch of Object.values(m.chunks || {})) if (ch.slot === 'chris') byCall[ch.source_ref?.startsWith('zoom:') ? ch.source_ref : ch.source] = (byCall[ch.source_ref?.startsWith('zoom:') ? ch.source_ref : ch.source] || 0) + 1;
++    const leaked = Object.values(m.chunks || {}).filter((ch) => ch.source_ref === `session:${id}` || ch.session_id === id).length;   // either provenance field — §7.3.5 covers both
++    const exCited = Object.entries(r.citation_details || {}).filter(([, d]) => d.type === 'exemplar').length;
++    console.log(`  ${id.padEnd(8)} ${cells.join('  ')}   ${r.meta?.scorer || '?'}${cards[id].blind ? '' : ' (card not blind)'}`);
++    console.log(`           chris ${m.counts?.chris ?? '?'} [${Object.entries(byCall).map(([k, v]) => `${k.replace('zoom:', '')}:${v}`).join(' ')}] · exemplars ${(m.exemplar_sessions || []).join(',') || 'none'} cited ${exCited}${leaked ? ` · SELF-LEAK ${leaked}` : ''}${r.quality?.guards_applied?.length ? ` · guards ${r.quality.guards_applied.join(' | ')}` : ''}`);
++  }
++  if (t.n) {
++    console.log(`  ── ${t.n} lines · exact ${t.exact} (${Math.round(100 * t.exact / t.n)}%) · within-one ${t.w1} (${Math.round(100 * t.w1 / t.n)}%) · AI over ${t.over} · under ${t.under} · mean Δ ${(t.sum / t.n).toFixed(2)}`);
++    console.log(`     per line: ${SCORED_CRITERIA.map((k) => `${SHORT[k]} ${t.per[k].exact}/${t.per[k].n} exact, Δ ${(t.per[k].sum / (t.per[k].n || 1)).toFixed(2)}`).join(' · ')}`);
++  }
++  totals[label] = t;
++}
++if (labels.length > 1) {
++  console.log('\n═══ summary ═══');
++  for (const l of labels) { const t = totals[l]; if (t.n) console.log(`  ${l.padEnd(10)} exact ${String(t.exact).padStart(2)}/${t.n}  within-one ${String(t.w1).padStart(2)}/${t.n}  mean Δ ${(t.sum / t.n).toFixed(2)}  over ${t.over} under ${t.under}`); }
++  console.log('  targets   exact ≥60% · within-one ≥85% (§1)');
++}
+diff --git a/scripts/score.mjs b/scripts/score.mjs
+index 22997c0..7b63dbf 100644
+--- a/scripts/score.mjs
++++ b/scripts/score.mjs
+@@ -4,6 +4,10 @@
+ //   npm run score -- 7uk7lnh --compare chris          → same, against Chris's scorecard on the session as read from the Sheet
+ //   npm run score -- 7uk7lnh --compare chris --reuse  → Step 2 only, on the extraction saved in out/score-<id>.json. Use this to A/B a
+ //                                                        template change: extraction is not repeatable, so a fresh one confounds the comparison.
++//   npm run score -- 7uk7lnh --compare chris --reuse --label gate  → same, but writes out/score-<id>.gate.json and never touches the base
++//                                                        file, so a baseline and any number of A/B variants sit side by side (scripts/ab-report.mjs).
++//   --reuse without out/score-<id>.json falls back to the extraction stored with Chris's exemplar for the session — the
++//   evidence his scorecard was ingested against. The fallback is written to out/score-<id>.json so later runs are on the same file.
+ //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
+ import 'dotenv/config';
+ import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+@@ -13,14 +17,17 @@ import { SCORED_CRITERIA } from '../lib/vocab.js';
+ import { mentorScores } from '../lib/mentorScores.js';
+ import { evidenceGuards } from '../lib/prompts/extract.js';
+ import { comparisonFacts } from '../lib/extractStats.js';
++import * as store from '../lib/store.js';
+ 
+ const args = process.argv.slice(2);
+ const flag = (n) => args.includes(n);
+ const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
+ const compareArg = opt('--compare');
+ const fixed = compareArg && /\d/.test(compareArg) ? compareArg.split(',').map(Number) : null;
+-const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare').map((x) => x.replace(/^ma_/, ''));
+-const KNOWN = ['--compare', '--debug', '--include-self', '--reuse'];
++const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare' && args[i - 1] !== '--label').map((x) => x.replace(/^ma_/, ''));
++const KNOWN = ['--compare', '--debug', '--include-self', '--reuse', '--label'];
++const label = opt('--label');
++if (label && !/^[\w-]+$/.test(label)) { console.error('--label: letters, digits, _ or - only'); process.exit(1); }
+ const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
+ if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')})`); process.exit(1); }
+ if (!ids.length) { console.error('usage: npm run score -- <sessionId> [...] [--compare "2,2,2,2,2,1"] [--debug] [--include-self]'); process.exit(1); }
+@@ -37,15 +44,22 @@ for (const id of ids) {
+   console.log(`\n── ${id} · ${s.date} · ${s.type} · ${s.who} · ${s.activity}`);
+   let reused = null;
+   if (flag('--reuse')) {
+-    reused = existsSync(`out/score-${id}.json`) ? JSON.parse(readFileSync(`out/score-${id}.json`, 'utf8')).extraction : null;
+-    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run`); fail = true; continue; }
+-    console.log(`  reusing saved extraction (v${reused.extract_version}) — Step 1 skipped`);
++    let from = `out/score-${id}.json`;
++    reused = existsSync(from) ? JSON.parse(readFileSync(from, 'utf8')).extraction : null;
++    if (!reused) {
++      const ex = (await store.liveBySourceRef('chris_score', `session:${id}`, { author: 'chris' })).find((c) => c.type === 'exemplar' && c.metadata?.extraction?.extract_version);
++      if (ex) { reused = ex.metadata.extraction; from = `Chris's exemplar ${ex.id.slice(0, 8)}`; writeFileSync(`out/score-${id}.json`, JSON.stringify({ extraction: reused, note: 'extraction copied from the exemplar for --reuse; no score in this file' }, null, 2)); }
++    }
++    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run, or a Chris exemplar with a stored extraction`); fail = true; continue; }
++    console.log(`  reusing extraction (v${reused.extract_version}) from ${from} — Step 1 skipped`);
+     // The code guards are part of Step 1; run the current ones over the saved inventory so a guard change is testable on fixed evidence too.
+     reused.extraction_guards = [...new Set([...(reused.extraction_guards || []), ...evidenceGuards(reused, s)])];
+     reused.comparison_to_intended_outcome = comparisonFacts(reused.comparison_to_intended_outcome);
+   }
+   const r = await scoreSession(s, { extraction: reused || undefined, debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
+-  writeFileSync(`out/score-${id}.json`, JSON.stringify(r, null, 2));
++  const outFile = label ? `out/score-${id}.${label}.json` : `out/score-${id}.json`;
++  writeFileSync(outFile, JSON.stringify(r, null, 2));
++  if (label) console.log(`  → ${outFile}`);
+   const old = s.parsedSummary?.scores || {};
+   for (const [i, k] of SCORED_CRITERIA.entries()) {
+     const c = compare ? `  chris ${compare[i]}  Δ${r.scores[k] - compare[i] >= 0 ? '+' : ''}${r.scores[k] - compare[i]}` : '';
+diff --git a/scripts/tag-sessions.mjs b/scripts/tag-sessions.mjs
+new file mode 100644
+index 0000000..05da029
+--- /dev/null
++++ b/scripts/tag-sessions.mjs
+@@ -0,0 +1,45 @@
++// Stamp metadata.session_id on an already-ingested Zoom call by time range — the `--sessions` step that was skipped at ingest.
++// Self-exclusion (§7.3.5) reads this field; without it a call reviewing a session leaks the mentor's spoken critique into
++// that session's own rescore. Provenance only: text, tags, embedding, approval untouched.
++//   node scripts/tag-sessions.mjs zoom:2026-09-24 --sessions "00:00:00-00:25:10=sjm4bip,00:33:20-00:44:00=sjm4bip" [--dry] [--force] [--source chris_zoom]
++import 'dotenv/config';
++import * as store from '../lib/store.js';
++import { normalizeSessions, sessionAt } from '../lib/ingest/zoom.js';
++
++const args = process.argv.slice(2);
++const flag = (n) => args.includes(n);
++const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
++const KNOWN = ['--sessions', '--dry', '--force', '--source'];
++const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
++if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')}`); process.exit(1); }
++const sourceRef = args.find((a, i) => !a.startsWith('--') && !['--sessions', '--source'].includes(args[i - 1]));
++const spec = opt('--sessions');
++if (!sourceRef || !spec) { console.error('usage: node scripts/tag-sessions.mjs <source_ref> --sessions "HH:MM:SS-HH:MM:SS=<id>,..." [--dry] [--force]'); process.exit(1); }
++
++const sessions = normalizeSessions(spec.split(',').map((part) => {
++  const m = part.trim().match(/^([\d:]+)-([\d:]+)=(\S+)$/);
++  if (!m) throw new Error(`bad range: ${part}`);
++  return { from: m[1], to: m[2], id: m[3] };
++}));
++
++const source = opt('--source') || 'chris_zoom';
++const chunks = (await store.liveBySourceRef(source, sourceRef)).sort((a, b) => (a.metadata?.sec ?? 0) - (b.metadata?.sec ?? 0));
++if (!chunks.length) { console.error(`no live ${source} chunks under ${sourceRef}`); process.exit(1); }
++console.log(`${sourceRef}: ${chunks.length} live ${source} chunks · ranges ${sessions.map((s) => `${s.range}→${s.id}`).join(' ')}${flag('--dry') ? ' · DRY' : ''}\n`);
++
++const updates = [];
++for (const c of chunks) {
++  const sec = c.metadata?.sec;
++  const ses = sec == null ? null : sessionAt(sec, sessions);
++  const cur = c.metadata?.session_id || null;
++  const mark = ses ? (cur === ses.id ? '=' : cur ? '!' : '+') : (cur ? '?' : ' ');
++  console.log(`${mark} ${c.metadata?.timestamp || '??:??:??'} ${String(c.type).padEnd(12)} ${ses ? ses.id : '—'.padEnd(7)}${cur && cur !== ses?.id ? ` (has ${cur})` : ''} | ${c.text.slice(0, 90).replace(/\s+/g, ' ')}`);
++  if (ses && cur !== ses.id) updates.push({ id: c.id, sessionId: ses.id });
++}
++console.log(`\n${updates.length} to stamp · ${chunks.length - updates.length} unchanged/untagged`);
++if (flag('--dry') || !updates.length) process.exit(0);
++
++const res = await store.stampSessionId(updates, { force: flag('--force') });
++const by = {}; for (const r of res) (by[r.status] ??= []).push(r);
++for (const [k, v] of Object.entries(by)) console.log(`${k}: ${v.length}`);
++if (by.conflict?.length) { console.error('conflicts left alone (use --force to overwrite):'); for (const r of by.conflict) console.error(`  ${r.id} has ${r.session_id}, wanted ${r.wanted}`); process.exit(2); }
+-- 
+2.43.0
+
