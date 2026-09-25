@@ -130,4 +130,19 @@ assert.deepEqual(n.quality.exemplars_cited, [], 'no exemplars in context → non
   assert.equal(nl.score, 2); assert.equal(nl.exemplar_bounds[0].chris, 2);
   assert.ok(/volume is not depth/.test(ES) && /"comparable" is equal/.test(ES) && /exemplar_bounds/.test(ES));
 }
+
+// ── 7c: DIRT vs adjective (Chris on a5v6zxm DP 2 vs sjm4bip DP 3, relayed by Mark) — deterministic, logged ──
+{
+  const { dirtFacts, dirtTerms } = await import('../lib/extractStats.js');
+  const sj = 'the skier would need to blend turning the skis with lower legs under a stable upper body while using leg tipping to manage edge angles to guide the ski, blending and varying the rate of extension and flexion of the ankle, knee, and hip.';
+  const a5 = 'the skier actively recenters on the ski through all phases of the turn as the skis meet terrain resistance, using active extension and flexion of the ankle, knee, and hip. Additionally, the turn would be shaped above and below the fall line, with the skier guiding the ski through most of the turn using leg rotation while keeping the pelvis stable.';
+  assert.deepEqual(dirtTerms(sj), ['varying', 'rate'], 'sjm4bip: varying the RATE');
+  assert.deepEqual(dirtTerms('active extension and flexion, strong edging, good balance, proper timing'), ['timing'], 'adjectives never count; a DIRT noun does');
+  const fa = dirtFacts({ desired_performance: { stated: true, quote: a5, fundamentals_blended: ['rotary'] }, prescription: { delivery_to_peer: 'Try flexing your ankles more gradually as you enter the turn.', rationale_to_examiner: null } });
+  assert.equal(fa.desired_performance.dirt_qualified, true, 'a5v6zxm says "through all phases" — a DIRT phrase (duration); the adjective "active" is not what qualified it');
+  assert.deepEqual(fa.desired_performance.dirt_terms, ['through all phases']);
+  assert.equal(fa.prescription.dirt_qualified, true); assert.deepEqual(fa.prescription.dirt_terms, ['gradually']);
+  assert.equal(dirtFacts({ desired_performance: { stated: false, quote: null } }).desired_performance.dirt_qualified, false);
+  assert.equal(dirtFacts(null), null); assert.deepEqual(dirtFacts({}), {});
+}
 console.log('selftest-score: all checks passed');

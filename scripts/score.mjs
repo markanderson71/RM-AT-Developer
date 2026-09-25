@@ -17,7 +17,7 @@ import { scoreSession } from '../lib/score.js';
 import { SCORED_CRITERIA } from '../lib/vocab.js';
 import { mentorScores } from '../lib/mentorScores.js';
 import { evidenceGuards } from '../lib/prompts/extract.js';
-import { comparisonFacts } from '../lib/extractStats.js';
+import { comparisonFacts, dirtFacts } from '../lib/extractStats.js';
 import * as store from '../lib/store.js';
 
 const args = process.argv.slice(2);
@@ -56,6 +56,7 @@ for (const id of ids) {
     // The code guards are part of Step 1; run the current ones over the saved inventory so a guard change is testable on fixed evidence too.
     reused.extraction_guards = [...new Set([...(reused.extraction_guards || []), ...evidenceGuards(reused, s)])];
     reused.comparison_to_intended_outcome = comparisonFacts(reused.comparison_to_intended_outcome);
+    dirtFacts(reused);
   }
   const r = await scoreSession(s, { extraction: reused || undefined, debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
   const outFile = label ? `out/score-${id}.${label}.json` : `out/score-${id}.json`;
