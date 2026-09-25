@@ -2,10 +2,8 @@
 // ({rows}|{data}|array, wrapped in {response}), update-then-create upsert, never throws to the UI.
 import { normalizeJournalRow, hasTypeColumn, byEntryDesc, contentRow, createRow, applyPulse, mergeComment } from "./lib/journal.js";
 
-// The Apps Script endpoint fails transiently: the 302 drops the POST and the proxy hands back a Google HTML page
-// (seen as 404 / non-JSON), or the script replies "Unknown action: ". Both clear on the next try. Reads AND writes
-// retry these; a real answer ("Row not found…") is never retried. Without the write retry, a transient failure on
-// update fell through to create and could duplicate the row.
+// Transient failures (a dropped connection, a 5xx from the store) are retried on reads AND writes; a real answer
+// ("Row not found…") is never retried. `update` upserts, so a repeated write can never duplicate a row.
 const TRANSIENT = /Unknown action|non-JSON|<!DOCTYPE|<html|HTTP 5\d\d|HTTP 404|Failed to fetch|NetworkError|timeout/i;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -21,15 +19,15 @@ async function sheetPostOnce(payload) {
   } catch (e) { return { ok: false, data: { error: String(e?.message || e) } }; }
 }
 
-// One Apps Script request at a time. Measured 2026-09-24: three getAll calls fired together (the login pattern) took
-// 12–29 s each and produced a 502, while the same three one after another took 1.5–2.5 s each — the script serialises
-// work on the spreadsheet, and a request killed for taking too long keeps running on Google's side, so every parallel
-// retry stacked more work behind the one that was already late. Serialising here costs a few seconds at login and
-// removes the pile-up; the proxy retry (api/sheet.js) still handles a genuinely dropped request.
+// Writes go one at a time: a merge-before-write (re-read the row, then write one column) must never race its own
+// earlier attempt. Reads run in parallel — since session 7b the store is Postgres, which handles the three login loads
+// together in well under a second. (The Apps Script serialised every read behind the biggest tab; that is why this
+// queue once covered reads too — hotfix 7, 2026-09-24.)
 let queue = Promise.resolve();
 const serial = (fn) => { const run = queue.then(fn, fn); queue = run.then(() => {}, () => {}); return run; };
 
 async function sheetPost(payload, attempts = 4) {
+  if (payload._action === "getAll" || payload._action === "ping") return sheetPostRetrying(payload, attempts);
   return serial(() => sheetPostRetrying(payload, attempts));
 }
 

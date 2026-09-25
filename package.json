@@ -21,7 +21,9 @@
     "test:zoom": "node scripts/selftest-zoom.mjs",
     "ingest:scores": "node scripts/ingest-scores.mjs",
     "test:ingest": "node scripts/selftest-ingest.mjs",
-    "test:journal": "node scripts/selftest-journal.mjs"
+    "test:journal": "node scripts/selftest-journal.mjs",
+    "migrate:sheet": "node scripts/migrate-sheet.mjs",
+    "test:ops": "node scripts/selftest-ops.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
