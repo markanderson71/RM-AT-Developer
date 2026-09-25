@@ -4,6 +4,9 @@
 //   npm run migrate:sheet                   copy Config / Journal / MASessions, then re-read from Postgres and diff
 //   npm run migrate:sheet -- --verify       diff only (run after the cut-over, or any time)
 //   npm run migrate:sheet -- --from out     read the Sheet from exported JSON files (out/Config.json, …) instead of HTTP
+//   npm run migrate:sheet -- --keep first   when an id appears twice with DIFFERENT content, keep the first row (the one
+//                                           the Apps Script's `update` has been writing to) — or `last`. Identical
+//                                           duplicates are always collapsed; differing ones stop the run unless --keep.
 //
 // Rerunnable: writes are upserts keyed on (sheet, id). A duplicate id inside one tab stops the run — the Sheet allowed
 // two rows with one id, Postgres does not, and picking one silently is how data gets lost.
@@ -15,11 +18,13 @@ import { getAll } from '../lib/sheet.js';
 import { getAll as storeGetAll, supabaseAdapter, splitPayload, SHEETS } from '../lib/ops.js';
 
 const args = process.argv.slice(2);
-const flags = new Set(['--dry', '--verify', '--from']);
+const flags = new Set(['--dry', '--verify', '--from', '--keep']);
 const unknown = args.filter((a) => a.startsWith('--') && !flags.has(a));
 if (unknown.length) { console.error(`unknown flag ${unknown.join(' ')}`); process.exit(2); }
 const dry = args.includes('--dry'), verifyOnly = args.includes('--verify');
 const fromDir = args.includes('--from') ? args[args.indexOf('--from') + 1] : null;
+const keep = args.includes('--keep') ? args[args.indexOf('--keep') + 1] : null;   // 'first' | 'last' for duplicate ids that differ
+if (keep && !['first', 'last'].includes(keep)) { console.error('--keep takes first or last'); process.exit(2); }
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) { console.error('SUPABASE_URL / SUPABASE_SERVICE_KEY not set'); process.exit(1); }
 const sourceUrl = fromDir ? `files in ${fromDir}/` : (process.env.APP_BASE_URL ? `${process.env.APP_BASE_URL}/api/sheet` : process.env.APPS_SCRIPT_URL || '(none)');
 const CUT_ID = 80;
@@ -34,18 +39,29 @@ async function readSheet(sheet) {
   return getAll(sheet, { via: 'http' });
 }
 
-/** Sheet row → { id, row } as the store holds it; blank rows dropped; `b` (mislabeled id header) folded into id. */
+/** Sheet row → { id, row } as the store holds it; blank rows dropped; `b` (mislabeled id header) folded into id.
+ *  Duplicate ids: identical copies collapse to one; differing copies are reported (and resolved only with --keep). */
 function normalize(sheet, rows) {
-  const out = [], dupes = [], skipped = [];
-  const seen = new Map();
+  const byId = new Map(), order = [], skipped = [];
   for (const r of rows) {
     const { id, cols } = splitPayload(r);
     if (!id) { if (Object.values(cols).some((v) => v !== '')) skipped.push(cols); continue; }
-    if (seen.has(id)) dupes.push(id);
-    seen.set(id, (seen.get(id) || 0) + 1);
-    out.push({ id, row: cols });
+    if (!byId.has(id)) { byId.set(id, []); order.push(id); }
+    byId.get(id).push(cols);
   }
-  return { items: out, dupes: [...new Set(dupes)], skipped };
+  const items = [], dupes = [];
+  for (const id of order) {
+    const copies = byId.get(id);
+    if (copies.length === 1) { items.push({ id, row: copies[0] }); continue; }
+    const first = copies[0], last = copies[copies.length - 1];
+    const keys = new Set([...Object.keys(first), ...Object.keys(last)]);
+    const differ = [...keys].filter((k) => (first[k] ?? '') !== (last[k] ?? ''));
+    if (!differ.length) { items.push({ id, row: first }); console.log(`   ${id}: appears ${copies.length}× with identical content → collapsed to one row`); continue; }
+    const detail = differ.map((k) => { const a = first[k] ?? '', b = last[k] ?? ''; return `${k} (first ${a.length} chars: ${JSON.stringify(a.slice(0, 40))}… | last ${b.length} chars: ${JSON.stringify(b.slice(0, 40))}…)`; });
+    if (keep) { items.push({ id, row: keep === 'first' ? first : last }); console.log(`   ${id}: ${copies.length} copies differ in ${differ.join(', ')} → keeping the ${keep} row (--keep ${keep})`); continue; }
+    dupes.push(`${id} (${copies.length} copies) differ in:\n      ${detail.join('\n      ')}`);
+  }
+  return { items, dupes, skipped };
 }
 
 function diffRows(sheet, sheetItems, storeRows) {
@@ -74,7 +90,7 @@ for (const sheet of SHEETS) {
   const chars = items.reduce((n, x) => n + Object.values(x.row).join('').length, 0);
   console.log(`${sheet}: ${rows.length} rows read in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${items.length} with an id (${(chars / 1024).toFixed(0)} KB)${skipped.length ? `, ${skipped.length} id-less non-blank row(s) SKIPPED` : ''}`);
   if (skipped.length) for (const s of skipped) console.log(`   skipped: ${JSON.stringify(s).slice(0, 120)}`);
-  if (dupes.length) { console.error(`   DUPLICATE ids in the Sheet: ${dupes.join(', ')} — fix the Sheet (delete or re-id the extra row) and rerun`); failed = true; continue; }
+  if (dupes.length) { console.error(`   DUPLICATE ids with DIFFERENT content:\n    ${dupes.join('\n    ')}\n   → rerun with \`--keep first\` (the row updates have been landing on) or \`--keep last\`, or fix the Sheet`); failed = true; continue; }
   const keys = new Set(); for (const x of items) for (const k of Object.keys(x.row)) keys.add(k);
   console.log(`   columns: ${[...keys].join(', ')}`);
   if (sheet === 'MASessions') {
