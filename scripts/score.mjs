@@ -9,6 +9,7 @@
 //   --reuse without out/score-<id>.json falls back to the extraction stored with Chris's exemplar for the session — the
 //   evidence his scorecard was ingested against. The fallback is written to out/score-<id>.json so later runs are on the same file.
 //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
+process.env.LLM_BUDGET_MS ||= '900000';   // CLI: no 300 s function limit — wait out a slow model rather than fail (lib/llm.js)
 import 'dotenv/config';
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { getMaSessions } from '../lib/sheet.js';
