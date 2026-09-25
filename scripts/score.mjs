@@ -4,6 +4,10 @@
 //   npm run score -- 7uk7lnh --compare chris          → same, against Chris's scorecard on the session as read from the Sheet
 //   npm run score -- 7uk7lnh --compare chris --reuse  → Step 2 only, on the extraction saved in out/score-<id>.json. Use this to A/B a
 //                                                        template change: extraction is not repeatable, so a fresh one confounds the comparison.
+//   npm run score -- 7uk7lnh --compare chris --reuse --label gate  → same, but writes out/score-<id>.gate.json and never touches the base
+//                                                        file, so a baseline and any number of A/B variants sit side by side (scripts/ab-report.mjs).
+//   --reuse without out/score-<id>.json falls back to the extraction stored with Chris's exemplar for the session — the
+//   evidence his scorecard was ingested against. The fallback is written to out/score-<id>.json so later runs are on the same file.
 //   flags: --debug (write assembled context too) · --include-self (leakage A/B only)
 import 'dotenv/config';
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
@@ -13,14 +17,17 @@ import { SCORED_CRITERIA } from '../lib/vocab.js';
 import { mentorScores } from '../lib/mentorScores.js';
 import { evidenceGuards } from '../lib/prompts/extract.js';
 import { comparisonFacts } from '../lib/extractStats.js';
+import * as store from '../lib/store.js';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : null; };
 const compareArg = opt('--compare');
 const fixed = compareArg && /\d/.test(compareArg) ? compareArg.split(',').map(Number) : null;
-const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare').map((x) => x.replace(/^ma_/, ''));
-const KNOWN = ['--compare', '--debug', '--include-self', '--reuse'];
+const ids = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--compare' && args[i - 1] !== '--label').map((x) => x.replace(/^ma_/, ''));
+const KNOWN = ['--compare', '--debug', '--include-self', '--reuse', '--label'];
+const label = opt('--label');
+if (label && !/^[\w-]+$/.test(label)) { console.error('--label: letters, digits, _ or - only'); process.exit(1); }
 const unknown = args.filter((x) => x.startsWith('--') && !KNOWN.includes(x));
 if (unknown.length) { console.error(`unknown flag: ${unknown.join(' ')} (known: ${KNOWN.join(' ')})`); process.exit(1); }
 if (!ids.length) { console.error('usage: npm run score -- <sessionId> [...] [--compare "2,2,2,2,2,1"] [--debug] [--include-self]'); process.exit(1); }
@@ -37,15 +44,22 @@ for (const id of ids) {
   console.log(`\n── ${id} · ${s.date} · ${s.type} · ${s.who} · ${s.activity}`);
   let reused = null;
   if (flag('--reuse')) {
-    reused = existsSync(`out/score-${id}.json`) ? JSON.parse(readFileSync(`out/score-${id}.json`, 'utf8')).extraction : null;
-    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run`); fail = true; continue; }
-    console.log(`  reusing saved extraction (v${reused.extract_version}) — Step 1 skipped`);
+    let from = `out/score-${id}.json`;
+    reused = existsSync(from) ? JSON.parse(readFileSync(from, 'utf8')).extraction : null;
+    if (!reused) {
+      const ex = (await store.liveBySourceRef('chris_score', `session:${id}`, { author: 'chris' })).find((c) => c.type === 'exemplar' && c.metadata?.extraction?.extract_version);
+      if (ex) { reused = ex.metadata.extraction; from = `Chris's exemplar ${ex.id.slice(0, 8)}`; writeFileSync(`out/score-${id}.json`, JSON.stringify({ extraction: reused, note: 'extraction copied from the exemplar for --reuse; no score in this file' }, null, 2)); }
+    }
+    if (!reused) { console.error(`${id}: --reuse needs out/score-${id}.json from an earlier run, or a Chris exemplar with a stored extraction`); fail = true; continue; }
+    console.log(`  reusing extraction (v${reused.extract_version}) from ${from} — Step 1 skipped`);
     // The code guards are part of Step 1; run the current ones over the saved inventory so a guard change is testable on fixed evidence too.
     reused.extraction_guards = [...new Set([...(reused.extraction_guards || []), ...evidenceGuards(reused, s)])];
     reused.comparison_to_intended_outcome = comparisonFacts(reused.comparison_to_intended_outcome);
   }
   const r = await scoreSession(s, { extraction: reused || undefined, debug: flag('--debug'), includeSelf: flag('--include-self'), onStep: (m) => console.log(`  … ${m}`) });
-  writeFileSync(`out/score-${id}.json`, JSON.stringify(r, null, 2));
+  const outFile = label ? `out/score-${id}.${label}.json` : `out/score-${id}.json`;
+  writeFileSync(outFile, JSON.stringify(r, null, 2));
+  if (label) console.log(`  → ${outFile}`);
   const old = s.parsedSummary?.scores || {};
   for (const [i, k] of SCORED_CRITERIA.entries()) {
     const c = compare ? `  chris ${compare[i]}  Δ${r.scores[k] - compare[i] >= 0 ? '+' : ''}${r.scores[k] - compare[i]}` : '';
