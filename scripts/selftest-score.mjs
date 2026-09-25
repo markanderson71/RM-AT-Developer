@@ -98,4 +98,36 @@ const ne = normalizeResult({ ...raw, citations: { ...raw.citations, evaluate: ['
 assert.deepEqual(ne.quality.exemplars_in_context, ['c:0000aaaa']); assert.deepEqual(ne.quality.exemplars_cited, ['c:0000aaaa']); assert.equal(ne.quality.exemplar_lines_anchored, 1);
 assert.equal(ne.citation_details['c:0000aaaa'].type, 'exemplar');
 assert.deepEqual(n.quality.exemplars_cited, [], 'no exemplars in context → none cited, no error');
+
+// ── v2-rag-5: the exemplar bound is enforced in code, on Chris's number as stored, never on volume or on the evaluator's arithmetic ──
+{
+  const { exemplarBound, normalizeLine } = await import('../lib/score.js');
+  const bidx = { ...idx,
+    '0000aaaa': { ...idx['0000aaaa'], scores: { cause_effect: 2, evaluate: 2, prescription: 3, desired_performances: 2, biomechanics: 3, equipment: 3 } },
+    '0000bbbb': { id: '0000bbbb-x', slot: 'exemplars', source: 'chris_score', author: 'chris', date: '2026-09-23', type: 'exemplar', source_ref: 'session:sjm4bip', title: 't', text: 'EX2', scores: { cause_effect: 3, evaluate: 2, prescription: 2, desired_performances: 3, biomechanics: 2, equipment: 2 } },
+    '0000cccc': { id: '0000cccc-x', slot: 'chris', source: 'chris_zoom', author: 'chris', date: '2026-09-24', type: 'principle', source_ref: 'zoom:2026-09-24', title: null, text: 'not an exemplar' },
+  };
+  // the 7uk7lnh Evaluate case: "comparable or slightly stronger" against a both_made line Chris scored 2, then 3 — equal is a ceiling
+  let b = exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', chris: 2, relation: 'equal', difference: 'none' }], bidx);
+  assert.equal(b.score, 2); assert.match(b.guard, /equal to exemplar c:0000aaaa \(Chris 2\) ⇒ 2/);
+  // weaker clamps too; stronger never lowers, and never raises (no floor in code)
+  assert.equal(exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', relation: 'weaker' }], bidx).score, 2);
+  assert.equal(exemplarBound('evaluate', 3, [{ exemplar: 'c:0000aaaa', relation: 'stronger', difference: 'complete where exemplar had none' }], bidx).score, 3);
+  assert.equal(exemplarBound('evaluate', 1, [{ exemplar: 'c:0000aaaa', relation: 'stronger' }], bidx).score, 1, 'no floor');
+  // the ceiling is the LOWEST equal/weaker exemplar's number, per line, read from the exemplar — a misreported chris value is ignored
+  b = exemplarBound('cause_effect', 3, [{ exemplar: 'c:0000bbbb', chris: 3, relation: 'equal' }, { exemplar: 'c:0000aaaa', chris: 5, relation: 'equal' }], bidx);
+  assert.equal(b.score, 2); assert.equal(b.bounds[1].chris, 2); assert.equal(b.bounds[1].stated_chris, 5);
+  // a non-exemplar id, an unknown id, or a garbage relation is recorded invalid and bounds nothing
+  b = exemplarBound('prescription', 4, [{ exemplar: 'c:0000cccc', relation: 'equal' }, { exemplar: 'c:deadbeef', relation: 'weaker' }, { exemplar: 'c:0000aaaa', relation: 'about the same' }], bidx);
+  assert.equal(b.score, 4); assert.deepEqual(b.bounds.map((x) => x.valid), [false, false, false]);
+  // under-scores are untouched: the three lines where the baseline scored below Chris all had equal/weaker anchors and scores already ≤ N
+  assert.equal(exemplarBound('biomechanics', 2, [{ exemplar: 'c:0000aaaa', relation: 'equal' }, { exemplar: 'c:0000bbbb', relation: 'weaker' }], bidx).score, 2);
+  // wired into normalizeResult and normalizeLine, logged as a guard, section averages recomputed after the clamp
+  const nr = normalizeResult({ ...raw, exemplar_bounds: { evaluate: [{ exemplar: 'c:0000aaaa', chris: 2, relation: 'equal', difference: 'none' }] } }, { extraction: x, chunkIndex: bidx });
+  assert.equal(nr.scores.evaluate, Math.min(raw.scores.evaluate, 2)); assert.equal(nr.exemplar_bounds.evaluate.length, 1);
+  if (raw.scores.evaluate > 2) { assert.ok(nr.quality.guards_applied.some((g) => /^evaluate: model gave/.test(g))); assert.equal(nr.section_averages.ma, Math.round(((nr.scores.cause_effect + 2 + nr.scores.prescription) / 3) * 100) / 100); }
+  const nl = normalizeLine({ scores: { evaluate: 3 }, citations: { evaluate: [] }, justifications: { evaluate: { 2: 'a', 3: 'b', 4: 'c' } }, exemplar_bounds: { evaluate: [{ exemplar: 'c:0000bbbb', relation: 'equal' }] } }, { line: 'evaluate', extraction: x, chunkIndex: bidx });
+  assert.equal(nl.score, 2); assert.equal(nl.exemplar_bounds[0].chris, 2);
+  assert.ok(/volume is not depth/.test(ES) && /"comparable" is equal/.test(ES) && /exemplar_bounds/.test(ES));
+}
 console.log('selftest-score: all checks passed');
