@@ -65,6 +65,7 @@ async function ingestMentorAssessments(config) {
       a.whatsWorking ? `WHAT'S WORKING: ${a.whatsWorking}` : null,
       a.consistentGaps ? `CONSISTENT GAPS: ${a.consistentGaps}` : null,
       a.progress ? `PROGRESS: ${a.progress}` : null,
+      a.challenge ? `WHERE TO CHALLENGE OR PUSH: ${a.challenge}` : null,   // fourth field, session 8
     ].filter(Boolean).join('\n\n');
     const kw = keywordTags(text);
     chunks.push({

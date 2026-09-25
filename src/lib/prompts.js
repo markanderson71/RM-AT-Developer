@@ -84,10 +84,10 @@ export function peerContext(exam, { prescribing = false } = {}) {
 
 /** Mentor development assessments (Config._MENTOR_ASSESSMENTS) — the "consistent gaps" tell the examiner where to probe. */
 export function mentorGapsBlock(mentorAssessments, users) {
-  const entries = Object.entries(mentorAssessments || {}).filter(([, v]) => v?.consistentGaps || v?.whatsWorking);
+  const entries = Object.entries(mentorAssessments || {}).filter(([, v]) => v?.consistentGaps || v?.whatsWorking || v?.challenge);
   if (!entries.length) return "";
-  return "\n\nMENTOR ASSESSMENTS OF MARK (his real examiner/mentors — probe the consistent gaps first):\n" +
-    entries.map(([k, a]) => `${users?.[k]?.name || k}: gaps — ${a.consistentGaps || "—"}; working — ${a.whatsWorking || "—"}`).join("\n");
+  return "\n\nMENTOR ASSESSMENTS OF MARK (his real examiner/mentors — probe the consistent gaps first, and push where they say to push):\n" +
+    entries.map(([k, a]) => `${users?.[k]?.name || k}: gaps — ${a.consistentGaps || "—"}; working — ${a.whatsWorking || "—"}${a.challenge ? `; push him on — ${a.challenge}` : ""}`).join("\n");
 }
 
 // ── Scoring (fallback path, harvested) ──────────────────────────────────────────────────────────
@@ -132,4 +132,38 @@ HOW TO RESPOND
 export function challengeUserMessage(entry, { typeLabel, reflection, connectionLabels = [] }) {
   const where = [entry.date, entry.context, entry.location, entry.conditions].filter(Boolean).join(" · ");
   return `${typeLabel}${where ? ` — ${where}` : ""}\n\n${reflection}\n\nConnections I tagged: ${connectionLabels.length ? connectionLabels.join(", ") : "none"}.\n\nChallenge my thinking.`;
+}
+
+// ── Progress: AI analysis for a mentor's Development Assessment (session 8) ──────────────────────────────────────────
+// The old button sent eight recent sessions with the OLD scorer's numbers and asked for three sections. This one is
+// built from scorecard(session, { viewer }): a session the mentor has not scored contributes no AI number (blind, §9);
+// the four sections match the form, including "Where to challenge or push" (added 2026-09-24). It suggests; he decides.
+export const ASSESSMENT_SYSTEM = `You are helping a PSIA-RM Alpine Trainer examiner update his written development assessment of Mark, an L3 instructor preparing for the AT exam. The assessment is read by the AI examiner every time Mark practises and by the AI scorer as ground truth, so it must be specific, evidenced and in the mentor's own voice — not praise, not a summary.
+
+Rules:
+- Use only what is in the material. Cite the session date or the journal date next to every claim ("9/18 bumps session"). Never invent a session, a score or a quote.
+- The mentor's scores and comments outrank the AI's numbers. Where they differ, say what the mentor saw that the scorer did not.
+- AT-level MA means: the how — body movement → ski performance → outcome, tied to the task; the comparison made twice (performance vs the peer's intent, intent vs the ideal); prescription as a coaching cue plus one reason; equipment × biomechanics × desired performance as a worked example. Judge against that, not against L3.
+- "Where to challenge or push" is the most useful section: name the one or two places Mark stops short, the question the mentor should keep asking, and what "done" would look like before the next exam.
+- Write as the mentor, first person, plain text. Four sections with these exact headings in capitals, each 2–5 sentences: WHAT'S WORKING / CONSISTENT GAPS / PROGRESS I'VE NOTICED / WHERE TO CHALLENGE OR PUSH. No bullets, no bold, under 380 words.`;
+
+export function buildAssessmentUser({ ma, journal, current, mentorName }) {
+  return [
+    `Mentor: ${mentorName || "Chris"}.`,
+    ma.length ? `MA SESSIONS (newest first):\n\n${ma.join("\n\n")}` : "MA SESSIONS: none.",
+    journal.length ? `JOURNAL REFLECTIONS (newest first):\n\n${journal.join("\n\n")}` : "JOURNAL REFLECTIONS: none.",
+    current ? `THE MENTOR'S CURRENT ASSESSMENT (revise, keep what still holds):\n${current}` : "THE MENTOR HAS NOT WRITTEN AN ASSESSMENT YET.",
+    "Produce the four sections.",
+  ].join("\n\n");
+}
+
+/** "WHAT'S WORKING: …" blocks → { whatsWorking, consistentGaps, progress, challenge }. Missing sections stay absent. */
+export function parseAssessmentReply(text) {
+  const keys = [["WHAT'S WORKING", "whatsWorking"], ["CONSISTENT GAPS", "consistentGaps"], ["PROGRESS I'VE NOTICED", "progress"], ["WHERE TO CHALLENGE OR PUSH", "challenge"]];
+  const out = {}; const t = String(text || "").replace(/\*\*/g, "");
+  keys.forEach(([h, k], i) => {
+    const re = new RegExp(`${h.replace(/'/g, "['’]")}\\s*:?\\s*([\\s\\S]*?)(?=\\n\\s*(?:${keys.slice(i + 1).map(([x]) => x.replace(/'/g, "['’]")).join("|") || "$^"})\\s*:?|$)`, "i");
+    const m = t.match(re); if (m && m[1].trim()) out[k] = m[1].trim();
+  });
+  return out;
 }

@@ -23,7 +23,9 @@
     "test:ingest": "node scripts/selftest-ingest.mjs",
     "test:journal": "node scripts/selftest-journal.mjs",
     "migrate:sheet": "node scripts/migrate-sheet.mjs",
-    "test:ops": "node scripts/selftest-ops.mjs"
+    "test:ops": "node scripts/selftest-ops.mjs",
+    "test:progress": "node scripts/selftest-progress.mjs",
+    "render:progress": "npx esbuild scripts/rendertest-progress.jsx --bundle --platform=node --format=esm --jsx=automatic --loader:.js=jsx --external:react --external:react-dom --outfile=_rtp.mjs --log-level=warning && node _rtp.mjs; rm -f _rtp.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

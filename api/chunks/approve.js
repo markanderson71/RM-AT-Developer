@@ -4,14 +4,15 @@
 //   edit     { id, actor, edit }                                                                             → stays pending
 //   delete   { id | ids, actor }                                                                             → pending only
 // Only the author approves or edits his statements. The candidate may delete obvious junk but never approve or reword.
-// `actor` is asserted by the client (same trust model as the rest of the app today) — see §17.
-import { preflight, readBody, fail } from '../../lib/http.js';
+// `actor` is asserted by the client; since session 8 the request must also carry MENTOR_TOKEN (lib/http.js requireToken).
+import { preflight, readBody, fail, requireToken } from '../../lib/http.js';
 import { approveChunk, editPending, deletePending, getChunk } from '../../lib/store.js';
 
 const ACTORS = ['chris', 'gates', 'mike', 'mark'];
 
 export default async function handler(req, res) {
   if (preflight(req, res)) return;
+  if (requireToken(req, res)) return;   // session 8 — see lib/http.js
   try {
     const b = readBody(req);
     const actor = String(b.actor || '').toLowerCase();

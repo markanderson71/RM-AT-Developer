@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-  const { query, limit = 10, sources, authors, types, skills, criteria, includeUnapproved = false } = body;
+  const { query, limit = 10, sources, authors, types, skills, criteria, includeUnapproved = false, trim = false } = body;   // trim: no metadata (§17 — a review UI never needs the stored extraction or AI rationale)
   if (!query || typeof query !== 'string') return res.status(400).json({ error: 'query (string) required' });
 
   try {
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
         source: r.source, author: r.author, type: r.type, source_ref: r.source_ref, date: r.date,
         criteria: r.criteria, skills: r.skills, approved: r.approved,
         text: r.text.length > 600 ? `${r.text.slice(0, 600)}…` : r.text,
-        metadata: r.metadata,
+        ...(trim ? { timestamp: r.metadata?.timestamp || null, title: r.metadata?.title || null } : { metadata: r.metadata }),
       })),
     });
   } catch (err) {

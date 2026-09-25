@@ -1,11 +1,12 @@
 // §6.2 approval view data. GET ?sourceRef=zoom:2026-09-18&author=chris   (or POST the same fields)
 // Returns pending chunks in call order, each with its context, tags, flags and "Replaces earlier →" candidates (§5.6).
-// Trimmed shape on purpose: no embeddings, no raw metadata.
-import { preflight, readBody, fail } from '../../lib/http.js';
+// Trimmed shape on purpose: no embeddings, no raw metadata. Requires MENTOR_TOKEN when set (session 8).
+import { preflight, readBody, fail, requireToken, authMode } from '../../lib/http.js';
 import { listPending, liveStatements, supersessionCandidates } from '../../lib/store.js';
 
 export default async function handler(req, res) {
   if (preflight(req, res, ['GET', 'POST'])) return;
+  if (requireToken(req, res)) return;   // session 8 — see lib/http.js
   try {
     const p = req.method === 'GET' ? (req.query || {}) : readBody(req);
     const rows = await listPending({ source: p.source || 'chris_zoom', sourceRef: p.sourceRef || null, author: p.author || null });
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
     });
     const by = (f) => pending.filter(f).length;
     return res.status(200).json({
-      count: pending.length,
+      count: pending.length, auth: authMode(),
       summary: { hedged: by((x) => x.hedged), attribution_check: by((x) => x.attribution_check), watch: by((x) => x.watch.length), with_candidates: by((x) => x.replaces_candidates.length),
         by_type: pending.reduce((a, x) => ({ ...a, [x.type]: (a[x.type] || 0) + 1 }), {}), calls: [...new Set(pending.map((x) => x.source_ref))] },
       pending,

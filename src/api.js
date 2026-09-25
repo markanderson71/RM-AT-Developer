@@ -1,6 +1,7 @@
 // Fetch wrappers for /api/*. Harvested from ATDevelopmentJournal.jsx: response-shape guards on getAll
 // ({rows}|{data}|array, wrapped in {response}), update-then-create upsert, never throws to the UI.
 import { normalizeJournalRow, hasTypeColumn, byEntryDesc, contentRow, createRow, applyPulse, mergeComment } from "./lib/journal.js";
+import { getToken, mergeAssessment, parseAssessments } from "./lib/progress.js";
 
 // Transient failures (a dropped connection, a 5xx from the store) are retried on reads AND writes; a real answer
 // ("Row not found…") is never retried. `update` upserts, so a repeated write can never duplicate a row.
@@ -82,10 +83,13 @@ export async function callClaude(messages, system, { model = "claude-sonnet-4-6"
 }
 
 // ── Scoring (§8): two calls so neither nears the function time limit. Throws on failure — the caller decides the fallback. ──
-async function postJson(url, body) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+// Session 8: the mentor access code (MENTOR_TOKEN on the server) rides on every /api call as X-AT-Token; the endpoints
+// that need it (chunks/pending, chunks/approve, agreement) answer 401 { auth: "required" } without it → err.auth = true.
+const authHeaders = () => { const t = getToken(); return t ? { "X-AT-Token": t } : {}; };
+async function postJson(url, body, { method = "POST" } = {}) {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json", ...authHeaders() }, body: method === "GET" ? undefined : JSON.stringify(body) });
   let data = null; try { data = await res.json(); } catch { /* HTML error page / timeout */ }
-  if (!res.ok || !data || data.error) throw new Error(data?.error || `${url} → HTTP ${res.status}`);
+  if (!res.ok || !data || data.error) throw Object.assign(new Error(data?.error || `${url} → HTTP ${res.status}`), { status: res.status, auth: res.status === 401 || data?.auth === "required" });
   return data;
 }
 export const scoreExtract = async (session) => (await postJson("/api/score/extract", { session })).extraction;
@@ -249,3 +253,25 @@ export async function notifyMentors(subject, body) {
   const { ok, data } = await sheetPost({ _action: "notify", _sheet: "Config", subject, body });
   return { ok: ok && data?.success !== false, sent: Number(data?.sent) || 0, error: data?.error ? String(data.error) : "" };
 }
+
+// ── Progress (session 8) ─────────────────────────────────────────────────────
+const qs = (o) => Object.entries(o).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+
+/** §12.4 — AI numbers are in the response: a mentor may only ask for his OWN rows (`mentor=<viewer>`), never another's. */
+export const loadAgreement = (mentor = "chris", window = 20) => postJson(`/api/agreement?${qs({ mentor, window })}`, null, { method: "GET" });
+
+/** §12.3 — pending Zoom statements with context and "replaces" candidates. A mentor lists his own; the candidate sees all (delete-only). */
+export const loadPending = ({ author = null, sourceRef = null } = {}) => postJson(`/api/chunks/pending?${qs({ author, sourceRef })}`, null, { method: "GET" });
+/** action: approve | edit | delete. { id | ids, edit?, replaces? }. Only the author approves or edits; delete is author or Mark. */
+export const chunkAction = (action, actor, args) => postJson("/api/chunks/approve", { action, actor, ...args });
+
+/** Mentor field ownership: re-read the live blob, merge THIS mentor's four fields, write the one Config column. → { ok, all } */
+export async function saveAssessment(mentorKey, fields, day) {
+  const rows = await apiGet("Config");
+  if (sheetHealth.failed.has("Config")) return { ok: false, reason: "unreachable", all: null };
+  const live = rows.find((r) => String(r.id ?? Object.values(r)[0] ?? "").trim() === "_MENTOR_ASSESSMENTS");
+  const all = mergeAssessment(live ? (live.data ?? Object.values(live)[1] ?? "") : "", mentorKey, fields, day);
+  const ok = await apiUpdate("Config", { id: "_MENTOR_ASSESSMENTS", data: JSON.stringify(all) });
+  return { ok, reason: ok ? "" : "write", all };
+}
+export { parseAssessments };

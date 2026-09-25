@@ -6,6 +6,7 @@ import { loadConfig, loadMaSessions, loadJournal, sheetHealth } from "./api.js";
 import Sparring from "./tabs/Sparring.jsx";
 import MAHistory from "./tabs/MAHistory.jsx";
 import Journal from "./tabs/Journal.jsx";
+import Progress from "./tabs/Progress.jsx";
 import { sealSessions } from "./lib/scorecard.js";
 
 const OLD_APP = "https://at-dev-tracker.vercel.app";
@@ -15,6 +16,7 @@ const TABS = [
   { id: "journal", label: "Journal", roles: ["candidate", "mentor"] },
   { id: "sparring", label: "Sparring Partner", roles: ["candidate"] },
   { id: "mahistory", label: "MA History", roles: ["candidate", "mentor"] },
+  { id: "progress", label: "Progress", roles: ["candidate", "mentor"] },
 ];
 
 const Shell = ({ children, center }) => (
@@ -127,6 +129,8 @@ export default function App() {
             {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}
               onUpdate={(s) => setData((d) => ({ ...d, maSessions: d.maSessions.map((x) => (x.id === s.id ? s : x)) }))}
               onDelete={(id) => setData((d) => ({ ...d, maSessions: d.maSessions.filter((x) => x.id !== id) }))} />}
+            {tab === "progress" && <Progress user={user} maSessions={data.maSessions} journal={data.journal} config={data.config} loaded={data.loaded}
+              onConfig={(patch) => setData((d) => ({ ...d, config: { ...d.config, ...patch } }))} />}
           </>
         )}
       </div>
