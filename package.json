@@ -2,7 +2,7 @@
   "name": "at-development-tracker",
   "private": true,
   "version": "1.1.0",
-  "description": "Alpine Trainer Development Tracker \u2014 Mark \u00b7 PSIA-RM \u00b7 Keystone",
+  "description": "Alpine Trainer Development Tracker — Mark · PSIA-RM · Keystone",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
-    "@supabase/supabase-js": "^2.49.0",
+    "@supabase/supabase-js": "^2.117.1",
     "dotenv": "^16.4.7",
     "pg": "^8.13.1",
     "react": "^18.3.1",
