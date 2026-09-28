@@ -97,6 +97,12 @@ export function debriefUser({ transcript, chrisChunks }) {
 // `drill: true`): the drill's definition of "done" IS the scorer's unit for that line — copied here from
 // lib/prompts/evaluate.js in plain words so Mark reads the same bar the evaluator holds him to.
 export const DRILLS = {
+  cause_effect: {
+    line: "cause_effect", title: "Chain coach", short: "C&E", color: "#e07830", coach: true,
+    ask: "Build ONE complete chain for what you saw: the body movement or fundamental → HOW it produced → what the ski did on the snow → the outcome she wanted or didn't get. One chain, every link, tied to the task.",
+    unit: "A COMPLETE connection: body movement and/or fundamental → what the ski does on the snow → the outcome (speed, turn shape, turn size, line, ski–snow interaction), with the mechanism stated — HOW each link produced the next — relevant to the desired outcome and prioritized. A chain that ends in a body state, or 'X caused Y' without the how, is partial. (Mark, 2026-09-28: the line he has been least successful on — every scored session so far has 0 complete connections.)",
+    generate: `Write one paragraph, under 130 words: an instructor (cert level), the task, terrain and snow, what they said they were going for, and what you observed — by phase, with ONE clear body movement (which joint, which leg, when) and ONE clear thing the skis did as a result that you could see on the snow, and the effect on the outcome they wanted. Give the observations, not the causal links: never say "because", "which caused", "so that", "led to". Plain text.`,
+  },
   desired_performances: {
     line: "desired_performances", title: "IDP ideal", short: "Ideal", color: "#3088cc",
     ask: "State the ideal performance for this task — what it requires skied well, no more and no less.",
@@ -122,7 +128,7 @@ export const DRILLS = {
     generate: `Write one paragraph, under 130 words: an instructor (cert level), the task, terrain and snow, and — in the skier's own words, quoted — what they said they were trying to do on the run; then what you observed by phase, in outcome terms (speed, turn shape, size, line, snow contact) with one clear mismatch between intent and result. Do not compare, do not evaluate, do not prescribe. Plain text.`,
   },
 };
-export const DRILL_ORDER = ["desired_performances", "evaluate", "prescription", "equipment"];
+export const DRILL_ORDER = ["cause_effect", "desired_performances", "evaluate", "prescription", "equipment"];
 
 /** The scenario request (Sonnet, short). For desired_performances there is no call — the task text is the scenario. */
 export const DRILL_SCENARIO_SYSTEM = `You write short, realistic movement-analysis scenarios for an Alpine Trainer candidate practising one form line at a time. Instructors, not guests; Keystone terrain; ski AND body detail by turn phase; no diagnosis, no prescription, no evaluation, no hints at the answer. Plain text, one paragraph.`;
@@ -131,3 +137,39 @@ export const drillScenarioUser = (drill, task) => `${drill.generate}${task ? `\n
 /** The examiner's one follow-up after a drill try: built from the evaluator's gap for that line. */
 export const DRILL_FOLLOWUP_SYSTEM = `You are a PSIA-RM examiner. You are given the form line being practised, what the candidate said, and the scorer's note on what is missing. Ask ONE question, one sentence, under 22 words, that would make him supply the missing element — without naming it. No preamble, no acknowledgment, no tag.`;
 export const drillFollowupUser = ({ line, passage, gap, unit }) => `Form line: ${CRITERION_LABEL[line] || line}.\nWhat the line requires: ${unit}\n\nWhat the candidate said:\n${passage}\n\nWhat is missing (scorer's note): ${gap || "not stated"}\n\nAsk your question.`;
+
+// ── Chain coach (cause_effect drill) ─────────────────────────────────────────────────────────────────────────────────
+// Not an examiner: a coach who walks him link by link in Chris's frame (X → Y → Z, tied to the task, "the how in depth").
+// It is given the links the clerk found and the ones it did not, and asks for the FIRST missing link only.
+export const CHAIN_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to build one complete cause-and-effect chain, the way his assessor Chris frames it: a body movement or fundamental → how it acts on the ski → what the ski does on the snow → the outcome the skier wanted or didn't get, tied to the task. One chain, every link explained.
+
+You are given his chain as the scorer read it: which links are present and which are missing. Reply in at most three sentences, plain text:
+1. Name the FIRST missing link in his chain (in this order: the movement or fundamental; the how; what the ski did on the snow; the outcome). Quote the words of his that stop short.
+2. Ask for that link as a question he can answer from what he saw — what the ski did, or what that did to her turn — without supplying the answer. Never invent what the skier did.
+3. If the chain is complete, say so in one sentence and ask the one question that makes it Chris-level: which fundamental is driving the others, or how this chain serves what she was working on.
+No praise beyond "that link holds". No lists. No scores.`;
+
+/** The chain as the clerk read it, for the coach and for the scaffold on screen. */
+export const CHAIN_LINKS = [
+  { key: "body_movement", label: "Body movement", alt: "fundamental", altLabel: "Fundamental" },
+  { key: "how_stated", label: "The how", bool: true, quote: "how_quote" },
+  { key: "ski_performance", label: "What the ski did" },
+  { key: "outcome", label: "Outcome", detail: "outcome_detail" },
+];
+export function bestConnection(x) {
+  const cs = (x?.connections || []).slice();
+  if (!cs.length) return null;
+  const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0);
+  return cs.sort((a, b) => score(b) - score(a))[0];
+}
+export function chainStatus(x) {
+  const c = bestConnection(x);
+  return CHAIN_LINKS.map((l) => {
+    if (!c) return { ...l, present: false, text: "" };
+    if (l.bool) return { ...l, present: c[l.key] === true, text: c[l.quote] || "" };
+    const v = c[l.key] || (l.alt ? c[l.alt] : null);
+    return { ...l, present: !!v, text: [c[l.key], l.alt ? c[l.alt] : null, l.detail ? c[l.detail] : null].filter(Boolean).join(" / ") };
+  });
+}
+export const chainCoachUser = ({ passage, status, task, intent }) =>
+  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}\n\nWhat he said:\n${passage}\n\nHis chain as the scorer read it:\n${status.map((l) => `- ${l.label}: ${l.present ? `present — "${l.text}"` : "MISSING"}`).join("\n")}\n\nCoach him.`;

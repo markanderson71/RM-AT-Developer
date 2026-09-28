@@ -91,7 +91,17 @@ assert.equal(S.MODES.length, 9); assert.ok(!S.MODES.some((m) => /question bank/i
 ok('sessions: sparring / written / chat save with only Mark\'s words in sections; scenario and debrief in notes');
 
 // ── 5. line drills ───────────────────────────────────────────────────────────────────────────────────────────────────
-assert.deepEqual(S.DRILL_ORDER, ['desired_performances', 'evaluate', 'prescription', 'equipment']);
+assert.deepEqual(S.DRILL_ORDER, ['cause_effect', 'desired_performances', 'evaluate', 'prescription', 'equipment']);
+assert.equal(S.DRILLS.cause_effect.coach, true); assert.ok(S.DRILLS.cause_effect.generate.includes('never say "because"'));
+// chain coach: the scaffold names the FIRST missing link in the order the coach asks for them
+const st1 = SP.chainStatus({ connections: [{ body_movement: 'hip rotation', fundamental: 'rotary', how_stated: false, ski_performance: null, outcome: null }] });
+assert.deepEqual(st1.map((l) => l.present), [true, false, false, false]); assert.equal(st1[0].text, 'hip rotation / rotary');
+const st2 = SP.chainStatus({ connections: [{ body_movement: 'x', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', outcome_detail: 'Z-shaped top', complete: true }, { body_movement: 'y' }] });
+assert.deepEqual(st2.map((l) => l.present), [true, true, true, true]); assert.equal(st2[1].text, 'legs cannot turn under the pelvis'); assert.equal(st2[3].text, 'turn_shape / Z-shaped top');
+assert.deepEqual(SP.chainStatus({ connections: [] }).map((l) => l.present), [false, false, false, false]); assert.deepEqual(SP.chainStatus(null).map((l) => l.present), [false, false, false, false]);
+const cu = SP.chainCoachUser({ passage: 'P', status: st1, task: 'Dynamic Short Turns', intent: 'guide' });
+assert.ok(cu.includes('- Body movement: present — "hip rotation / rotary"') && cu.includes('- What the ski did: MISSING') && cu.includes('What the skier was going for: guide'));
+assert.ok(SP.CHAIN_COACH_SYSTEM.includes('FIRST missing link') && SP.CHAIN_COACH_SYSTEM.includes('Never invent what the skier did'));
 for (const k of S.DRILL_ORDER) assert.ok(S.DRILLS[k].unit.length > 80 && S.DRILLS[k].ask && (k === 'desired_performances' ? S.DRILLS[k].generate === false : S.DRILLS[k].generate.length > 50));
 const t1 = S.dealTask(tasks, 'a'); assert.ok(t1.levels.includes('LEVEL III')); assert.equal(S.dealTask(tasks, 'a').name, t1.name);
 assert.ok(SP.drillScenarioUser(S.DRILLS.equipment, dst).includes('Use this task: Dynamic Short Turns'));

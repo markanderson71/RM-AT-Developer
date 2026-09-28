@@ -28,7 +28,7 @@ for (const id of ["atexam", "examiner", "drill", "writtenma", "scenario", "rever
   mem.set(MODE_KEY, id);
   const h = text(renderToString(<Sparring maSessions={[]} mentorAssessments={assessments} config={{}} onSaved={noop} />));
   ok(h.includes("AT MA Exam") && h.includes("Examiner Sparring") && h.includes("Line drills") && h.includes("Written MA") && h.includes("Open Chat"), `mode ${id}: picker shows all nine modes`);
-  if (id === "drill") ok(h.includes("IDP ideal") && h.includes("Two comparisons") && h.includes("Tactics") && h.includes("Equipment") && h.includes("Pick a line"), "drill mode: four drills offered, none started");
+  if (id === "drill") ok(h.includes("Chain coach") && h.includes("IDP ideal") && h.includes("Two comparisons") && h.includes("Tactics") && h.includes("Equipment") && h.includes("Pick a line"), "drill mode: five drills offered, none started");
   if (id === "examiner") ok(h.includes("Submit to the examiner") && h.includes("No peer in this mode"), "examiner mode: setup screen");
   if (id === "writtenma") ok(h.includes("Write my MA") && h.includes("Generate a scenario"), "written mode: two ways in");
   if (id === "scenario") ok(h.includes("Scenario Drill — start"), "scenario chat: opener button");
@@ -58,6 +58,13 @@ const d = { ...freshDrill(), line: "equipment", task: { name: "Dynamic Short Tur
 mem.set("rmat_spar_drill", JSON.stringify(d));
 const dr = text(renderToString(<LineDrill onSaved={noop} />));
 ok(dr.includes("Equipment · Dynamic Short Turns") && dr.includes("What counts:") && dr.includes("SCENARIO SCEN") && dr.includes("Examiner: And the boot flex?") && dr.includes("Unit not complete") && dr.includes("Still missing: the outcome") && dr.includes("Score again (try 2)") && dr.includes("Save to MA History"), "drill: scenario, unit, follow-up, result, try again, save");
+
+// chain coach mid-try: scaffold shows the missing links, the coach speaks
+const cc = { ...freshDrill(), line: "cause_effect", task: { name: "Dynamic Short Turns", levels: ["LEVEL III"], ski: [], body: [], terrain: [] }, scenario: "SCEN", passage: "Her hips rotated into the turn at initiation.", followup: "Your chain stops at the hips — what did the skis do on the snow when the hips came round?",
+  tries: [{ at: "t", passage: "x", score: 2, why: "w", gap: "g", evidence: "complete: 0 · partial: 1", unit: { complete: false, missing: ["what the SKI does on the snow"] }, chain: [{ key: "body_movement", label: "Body movement", present: true, text: "hip rotation / rotary" }, { key: "how_stated", label: "The how", present: false, text: "" }, { key: "ski_performance", label: "What the ski did", present: false, text: "" }, { key: "outcome", label: "Outcome", present: false, text: "" }], citations: [], citation_details: {} }] };
+mem.set("rmat_spar_drill", JSON.stringify(cc));
+const ch = text(renderToString(<LineDrill onSaved={noop} />));
+ok(ch.includes("Chain coach · Dynamic Short Turns") && ch.includes("✓ Body movement") && ch.includes("hip rotation / rotary") && ch.includes("✗ The how") && ch.includes("✗ What the ski did") && ch.includes("✗ Outcome") && ch.includes("Coach: Your chain stops at the hips") && !ch.includes("Examiner:"), "chain coach: four-link scaffold with the missing links marked, coach voice not examiner");
 
 // examiner sparring after "OK, thank you." with a debrief
 const sp = { ...freshSparring(), phase: "debrief", who: "Solid L3 candidate", activity: "Dynamic Short Turns", presentation: "PRES", probes: [{ role: "assistant", content: "What was she intending?", line: "evaluate" }, { role: "user", content: "Guiding." }, { role: "assistant", content: "OK, thank you." }], debrief: { form: "F-line", chris: "C-line" } };
