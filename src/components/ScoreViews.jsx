@@ -29,6 +29,12 @@ export const ScoreChips = ({ card, who }) => {
 /** Full grid: sections, lines, section averages, and an optional second row of numbers (mentor) with per-line delta. */
 export const ScoreGrid = ({ card, compare, compareLabel }) => {
   if (card.status !== "scored") return null;
+  if (card.form === "drill") return (   // one practised line (session 9): no sections, no averages
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+      {card.lines.map((l) => <Cell key={l.key} line={l} />)}
+      <span style={{ fontSize: 11, color: C.dim }}>Line drill — this line only, no section average, no pass/fail.</span>
+    </div>
+  );
   if (card.form === "legacy") return (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
       {card.lines.map((l) => <Cell key={l.key} line={l} />)}

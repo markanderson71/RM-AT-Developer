@@ -207,6 +207,16 @@ export const scoreLineTry = ({ session, extraction, line, section, passage, orig
   postJson("/api/score/evaluate", { lines: [line], extraction, section, passage, original: original || null, sessionId: session.id || undefined,
     session: { type: session.type, context: session.context, who: session.who, activity: session.activity, conditions: session.conditions, sections: session.sections, transcript: Object.keys(session.sections || {}).length ? undefined : session.transcript } });
 
+/** Line drill (session 9): the passage is the whole session. → one line's result with `unit`. Read-only. */
+export const scoreDrill = ({ line, passage, activity, peerIntent }) =>
+  postJson("/api/score/evaluate", { drill: true, lines: [line], passage, section: "presentation", session: { activity: activity || null, peer_intent: peerIntent || null } });
+
+/** Chris's approved statements nearest a text — the examiner's register (session 9). Trimmed shape; empty on failure. */
+export async function chrisStatements(query, { limit = 8 } = {}) {
+  try { const r = await postJson("/api/chunks/search", { query: String(query || "").slice(0, 4000), limit, authors: ["chris"], trim: true }); return (r.results || []).filter((c) => c.type !== "exemplar"); }
+  catch (e) { console.warn("chrisStatements:", e?.message || e); return []; }
+}
+
 // ── Journal (session 7) ───────────────────────────────────────────────────────
 // Same write discipline as MA History: Mark's save sends the content columns; a depth tap sends `mentorPulse`; a comment
 // sends `mentorComments` — the last two after re-reading the live row, so nobody writes over anybody from a stale copy.

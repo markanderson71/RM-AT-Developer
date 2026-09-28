@@ -37,7 +37,7 @@ export const LEGACY_LINES = [
 const round2 = (n) => Math.round(n * 100) / 100;
 
 /** Which form a result is on. `equipment` present = 2026 evaluator; scorer:"legacy" always wins. */
-export const formOf = (r) => (!r?.scores ? null : (r.scorer === "legacy" || r.meta?.scorer === "legacy" || r.scores.equipment == null) ? "legacy" : "2026");
+export const formOf = (r) => (!r?.scores ? null : r.drill && LINE_LABEL[r.drill] ? "drill" : (r.scorer === "legacy" || r.meta?.scorer === "legacy" || r.scores.equipment == null) ? "legacy" : "2026");
 export const isLegacyAttempt = (a) => formOf(a) === "legacy";
 
 /** Any scorer result (a live attempt, or a parsed summary) → the card. No viewer logic here. */
@@ -45,6 +45,12 @@ export function resultCard(r) {
   const form = formOf(r);
   if (!form) return { status: r ? "unparsed" : "unscored", form: null, lines: [], sections: null, meets: null, diagnostics: [], scorer: null, detail: r || null, warnings: [] };
   const warnings = [];
+  // A line drill (session 9) is one 2026 line practised on its own: one line, no section average, no verdict. Never
+  // trended or averaged with a full session — Progress lists drills separately.
+  if (form === "drill") {
+    const def = LINES.find((l) => l.key === r.drill);
+    return { status: "scored", form, drill: r.drill, lines: [{ ...def, score: cleanScore(r.scores[r.drill]) }], sections: null, meets: null, diagnostics: [], scorer: r.meta?.scorer || r.scorer || "rag", scoredAt: r.meta?.scored_at || r.scoredAt || null, detail: r, warnings: [] };
+  }
   const defs = form === "2026" ? LINES : LEGACY_LINES;
   const lines = defs.map((l) => ({ ...l, score: cleanScore(r.scores[l.key]) }));
   lines.filter((l) => l.score == null).forEach((l) => warnings.push(`${l.label}: no score`));
@@ -64,6 +70,7 @@ export function resultCard(r) {
 export function attemptRank(a) {
   const c = resultCard(a);
   if (c.status !== "scored") return -2;
+  if (c.form === "drill") return -1.7;
   if (c.form === "legacy") return -1 + c.lines.reduce((n, l) => n + (l.score || 0), 0) / 100;   // legacy only ever competes with legacy
   return c.sections.ma != null && c.sections.tu != null ? round2(c.sections.ma + c.sections.tu) : -1.5;
 }
@@ -88,6 +95,7 @@ export function sealSessions(sessions, viewer) {
   if (viewer?.role !== "mentor") return sessions;
   return sessions.map((s) => {
     if (mentorScores(s)[viewer.key] || !s.summary) return s;
+    if (s.type === "drill") return s;                                   // one practised line, no form to score blind (session 9)
     vault.set(s.id, s.summary);
     return { ...s, summary: "", summarySealed: true };
   });
@@ -123,7 +131,7 @@ export function scorecard(session, { viewer = null } = {}) {
   const mentors = mentorScores(session);
   const isMentor = viewer?.role === "mentor";
   const mine = isMentor ? mentors[viewer.key] || null : null;
-  if (isMentor && !mine) {
+  if (isMentor && !mine && session?.type !== "drill") {           // a line drill (session 9) has no six-line form to score blind — shown as-is
     // Blind (§9). Not even "has the AI scored this" detail beyond a flag; and other mentors' scorecards stay hidden
     // too, so inter-rater comparison later means something.
     return { id: session.id, sealed: true, status: "sealed", form: null, lines: [], sections: null, meets: null, diagnostics: [], scorer: null, detail: null, warnings: [], mentors: {}, mine: null, delta: null, hasAi: vault.has(session.id) || aiCard(session).status === "scored" };

@@ -10,7 +10,11 @@ import { briefLines } from "../../lib/coaching.js";
 import { byDateDesc } from "../api.js";
 import { ScoreChips, ScoreGrid, MeetsBadge, LegacyNotice, Diagnostics, Block, scoreColor } from "../components/ScoreViews.jsx";
 import Rationale from "./Rationale.jsx";
-import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock } from "../lib/prompts.js";
+import { PEER_SYSTEM, EXAMINER_SYSTEM, examinerTranscript, peerContext, mentorGapsBlock, examinerExemplarsBlock, parseExaminerReply } from "../lib/prompts.js";
+import { dealIntent, renderPeerBrief, revealIntent } from "../lib/peerBrief.js";
+import { loadIdpTasks, atTasks, findTask, renderTask } from "../lib/idp.js";
+import { ASSESSMENT_FIELDS } from "../lib/progress.js";
+import { chrisStatements } from "../api.js";
 
 const TONE = C.exam;
 const AUTOSPEAK_KEY = "rmat_autospeak";
@@ -30,6 +34,8 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
   const [saveState, setSaveState] = useState({ status: "idle", message: "" }); // idle | saving | saved | error
   const [autoSpeak, setAutoSpeak] = useState(() => { try { return window.localStorage.getItem(AUTOSPEAK_KEY) === "1"; } catch { return false; } });
   const examRef = useRef(exam); examRef.current = exam;
+  const [tasks, setTasks] = useState([]);
+  useEffect(() => { loadIdpTasks().then((t) => setTasks(atTasks(t))).catch(() => {}); }, []);
 
   useEffect(() => persistExam(exam), [exam]);
   useEffect(() => { try { window.localStorage.setItem(AUTOSPEAK_KEY, autoSpeak ? "1" : "0"); } catch { /* ignore */ } }, [autoSpeak]);
@@ -44,21 +50,28 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
     const msgs = [...examRef.current[key], { role: "user", content: text }];
     upd((p) => ({ [key]: msgs, drafts: { ...p.drafts, [prescribing ? "prescribe" : "dialog"]: "" } }));
     setLoading(true);
-    const ctx = peerContext(examRef.current, { prescribing });
+    const ex = examRef.current;
+    // Session 9: the peer answers from a dealt intent (§17, Chris 9/24). Dealt once at "Start observation"; never shown to Mark before the score screen.
+    const brief = ex.brief?.intent ? renderPeerBrief({ intent: ex.brief.intent, taskText: renderTask(findTask(tasks, ex.activity)), who: ex.who, activity: ex.activity, conditions: ex.conditions }) : "";
+    const ctx = peerContext(ex, { prescribing, brief });
     const apiMsgs = msgs.map((m, i) => (i === 0 ? { role: "user", content: `${ctx}\n\nMark: ${m.content}` } : m));
     const resp = await callClaude(apiMsgs, PEER_SYSTEM);
     upd({ [key]: [...msgs, { role: "assistant", content: resp }] });
     setLoading(false); say(resp);
   };
 
-  const examinerOpening = () => `${examinerTranscript(examRef.current)}${mentorGapsBlock(mentorAssessments, USERS)}\n\nAsk your first question.`;
+  const examinerOpening = () => `${examinerTranscript(examRef.current)}${mentorGapsBlock(mentorAssessments, USERS)}${examinerExemplarsBlock(examRef.current.chris)}\n\nAsk your first question.`;
+  // Session 9: each probe carries the form line it targets ("[line: …]"), stripped for display and speech, kept on the message.
+  const examinerTurn = (raw) => { const { line, text } = parseExaminerReply(raw); return { role: "assistant", content: text, line }; };
 
   const startDebrief = async () => {
     upd({ phase: "debrief", debriefMessages: [] });
     setLoading(true);
-    const resp = await callClaude([{ role: "user", content: examinerOpening() }], EXAMINER_SYSTEM);
-    upd({ debriefMessages: [{ role: "assistant", content: resp }] });
-    setLoading(false); say(resp);
+    const chris = await chrisStatements(examRef.current.presentation);    // the examiner's register: what Chris has actually said, nearest this presentation
+    upd({ chris });
+    const turn = examinerTurn(await callClaude([{ role: "user", content: examinerOpening() }], EXAMINER_SYSTEM));
+    upd({ debriefMessages: [turn] });
+    setLoading(false); say(turn.content);
   };
 
   const MAX_EXAMINER_QUESTIONS = 4;
@@ -71,9 +84,9 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
     // Real exam: the examiner stops. Enforced here, not left to the prompt.
     if (msgs.filter((m) => m.role === "user").length >= MAX_EXAMINER_QUESTIONS) { upd({ debriefMessages: [...msgs, { role: "assistant", content: EXAMINER_END }] }); say(EXAMINER_END); return; }
     setLoading(true);
-    const resp = await callClaude([{ role: "user", content: examinerOpening() }, ...msgs], EXAMINER_SYSTEM);
-    upd({ debriefMessages: [...msgs, { role: "assistant", content: resp }] });
-    setLoading(false); say(resp);
+    const turn = examinerTurn(await callClaude([{ role: "user", content: examinerOpening() }, ...msgs.map((m) => ({ role: m.role, content: m.content }))], EXAMINER_SYSTEM));
+    upd({ debriefMessages: [...msgs, turn] });
+    setLoading(false); say(turn.content);
   };
 
   // Two-step RAG scorer (§8): extract → evaluate. If either call fails, fall back to the old single-prompt scorer
@@ -149,7 +162,7 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
       {/* 1 · Setup */}
       {exam.phase === "setup" && (
         <>
-          <PreExamBrief maSessions={maSessions} />
+          <PreExamBrief maSessions={maSessions} mentorAssessments={mentorAssessments} />
           <Field label="Video link"><Input value={exam.videoUrl} onChange={(e) => upd({ videoUrl: e.target.value })} placeholder="YouTube or Google Drive link to the skiing you'll analyze" /></Field>
           {exam.videoUrl && <Field label="Video time range"><Input value={exam.videoTime} onChange={(e) => upd({ videoTime: e.target.value })} placeholder="e.g., 0:32 - 1:15" /></Field>}
           {ytId && <a href={exam.videoUrl} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 8 }}><img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", maxWidth: 320, borderRadius: 8 }} /></a>}
@@ -164,10 +177,11 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
                 <option value="Advanced AT candidate">Advanced AT candidate</option>
               </Select>
             </Field>
-            <Field label="Activity"><Input value={exam.activity} onChange={(e) => upd({ activity: e.target.value })} placeholder="e.g., Dynamic Short Turns" /></Field>
+            <Field label="Activity"><Input list="idp-tasks-exam" value={exam.activity} onChange={(e) => upd({ activity: e.target.value })} placeholder="IDP task or free text" /><datalist id="idp-tasks-exam">{tasks.map((t) => <option key={t.name} value={t.name} />)}</datalist></Field>
             <Field label="Conditions"><Input value={exam.conditions} onChange={(e) => upd({ conditions: e.target.value })} placeholder="e.g., Groomed blue, firm" /></Field>
           </div>
-          <Button tone={TONE} disabled={!exam.who || !exam.activity} onClick={() => go("observe")} style={{ width: "100%" }}>Start observation</Button>
+          <Hint style={{ marginBottom: 8 }}>The peer will be dealt an intent from Chris's menu — what they were actually trying to do on this run. You won't see it; you have to find it by asking. It's revealed with your score.</Hint>
+          <Button tone={TONE} disabled={!exam.who || !exam.activity} onClick={() => { upd((p) => ({ brief: p.brief?.intent ? p.brief : { intent: dealIntent(`${Date.now()}-${p.activity}`) } })); go("observe"); }} style={{ width: "100%" }}>Start observation</Button>
         </>
       )}
 
@@ -245,7 +259,7 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
           <Review title="Your presentation (what the examiner heard)">{exam.presentation}</Review>
           <Thread messages={exam.debriefMessages} me={C.mark} them={C.examiner} meLabel="Mark" themLabel="Examiner" loading={loading} loadingText="Examiner thinking…" maxHeight={320} />
           {debriefOver(exam.debriefMessages)
-            ? <Hint style={{ marginBottom: 8, color: C.examiner }}>The examiner has finished. Score when you're ready.</Hint>
+            ? <Hint style={{ marginBottom: 8, color: C.examiner }}>The examiner has finished{(() => { const ls = [...new Set(exam.debriefMessages.filter((m) => m.line).map((m) => LINE_LABEL[m.line]))]; return ls.length ? ` — probed: ${ls.join(", ")}` : ""; })()}. Score when you're ready.</Hint>
             : <Composer value={exam.drafts.debrief} onChange={(v) => setDraft("debrief", v)} onSend={answerExaminer} disabled={loading} tone={TONE} sendLabel="Reply" placeholder="Answer the examiner…" />}
           <div style={{ display: "flex", gap: 6 }}>
             <Button tone={C.muted} onClick={() => go("present")} disabled={loading}>Back</Button>
@@ -268,14 +282,24 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
  * Pre-exam brief (§13 row 5c): three lines to carry in, from the last session scored on the 2026 form.
  * Ranked by Chris's scorecard where he has given one, else the AI's. Read through scorecard() like everything else.
  */
-function PreExamBrief({ maSessions }) {
+function PreExamBrief({ maSessions, mentorAssessments }) {
+  // Session 9: the mentors' "Where to challenge or push" rides in above the three lines (session 8 follow-up a).
+  const pushes = Object.entries(mentorAssessments || {}).filter(([, a]) => String(a?.challenge || "").trim()).map(([k, a]) => ({ who: USERS[k]?.name || k, color: USERS[k]?.color || C.muted, text: a.challenge.trim() }));
   const last = [...(maSessions || [])].sort(byDateDesc).map((s) => ({ s, card: scorecard(s) })).find(({ card }) => card.status === "scored" && card.form === "2026" && card.detail?.gap_to_next);
-  if (!last) return null;
+  if (!last && !pushes.length) return null;
+  const pushBlock = pushes.length > 0 && (
+    <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: "rgba(192,96,160,0.06)", border: "1px solid rgba(192,96,160,0.2)" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, marginBottom: 4 }}>{ASSESSMENT_FIELDS.find((f) => f.key === "challenge")?.label || "Where to challenge or push"}</div>
+      {pushes.map((p) => <div key={p.who} style={{ fontSize: 13, color: C.body, lineHeight: 1.5, marginBottom: 3 }}><b style={{ color: p.color }}>{p.who}: </b>{p.text}</div>)}
+    </div>
+  );
+  if (!last) return pushBlock || null;
   const chris = last.card.mentors?.chris;
   const rank = chris ? chris.scores : Object.fromEntries(last.card.lines.map((l) => [l.key, l.score]));
   const lines = briefLines(last.card.detail, rank, 3);
-  if (!lines.length) return null;
-  return (
+  if (!lines.length) return pushBlock || null;
+  return (<>
+    {pushBlock}
     <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: "rgba(232,160,80,0.05)", border: "1px solid rgba(232,160,80,0.18)" }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, marginBottom: 2 }}>Carry these in — from {last.s.date} · {last.s.activity || "last session"}</div>
       <Hint style={{ marginBottom: 6 }}>Your three lowest lines {chris ? "on Chris's scorecard" : "(AI score)"}. The moves are AI suggestions.</Hint>
@@ -285,6 +309,19 @@ function PreExamBrief({ maSessions }) {
           {l.gap.say && <div style={{ fontSize: 12, color: C.muted, margin: "3px 0 4px 14px", lineHeight: 1.5 }}>Last time, instead of “{l.gap.instead}”, the suggestion was: “{l.gap.say}”</div>}
         </details>
       ))}
+    </div>
+  </>);
+}
+
+/** Score-screen reveal (session 9): what the peer was dealt, beside what Mark asked and what the peer told him. */
+function Reveal({ exam, extraction }) {
+  const r = revealIntent({ intent: exam.brief.intent, extraction, dialogMessages: exam.dialogMessages });
+  return (
+    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: "rgba(192,128,208,0.07)", border: "1px solid rgba(192,128,208,0.25)" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.peer, marginBottom: 3 }}>The peer's brief — revealed</div>
+      <div style={{ fontSize: 13, color: C.body, lineHeight: 1.55 }}>They were dealt: <b>{r.dealt}</b>. In their words: “{r.peerWords}.”</div>
+      <div style={{ fontSize: 12, color: r.askedIntent ? C.green : C.orange, marginTop: 4, fontWeight: 600 }}>{r.askedIntent ? "You asked what they were going for." : "You never asked what they were going for — every line is scored relative to that outcome (Chris, 9/24)."}</div>
+      {r.peerAnswers.length > 0 && <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>What the clerk heard the peer tell you: {r.peerAnswers.map((a) => `“${a}”`).join(" · ")}</div>}
     </div>
   );
 }
@@ -322,6 +359,7 @@ function Scored({ exam, saveState, onRevise, onSave, onNew, onRescore, loading, 
       {!failed && card.form === "legacy" && current?.scorer_error && <Hint style={{ color: C.orange, marginBottom: 4 }}>⚠ The new scorer was unavailable ({current.scorer_error}). Nothing below is on the 2026 form.</Hint>}
       {!failed && card.form === "legacy" && current?.scorer_error && <Button solid tone={TONE} disabled={loading} onClick={() => onRescore({ replaceFallback: true })} style={{ width: "100%", margin: "2px 0 10px", padding: 10 }}>{loading ? scoreStep || "Scoring…" : "Score again with the new scorer (replaces this, uses no revision)"}</Button>}
       <LegacyNotice card={card} />
+      {exam.brief?.intent && <Reveal exam={exam} extraction={current?.extraction} />}
 
       {failed ? null : card.status === "scored" ? (
         <>

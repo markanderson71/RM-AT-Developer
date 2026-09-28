@@ -40,11 +40,12 @@ const byDateAsc = (a, b) => String(a.date || "").localeCompare(String(b.date || 
 
 /**
  * @returns { rows: 2026-form sessions [{ id, date, label, lines{key:score}, sections, meets, scorer, mentor{key:{scores,…}} }],
- *            legacy: old-scorer sessions (labelled, separate — never in `rows`), sealed: sessions withheld from this viewer,
+ *            legacy: old-scorer sessions (labelled, separate — never in `rows`), drills: line drills (one line each, session 9),
+ *            sealed: sessions withheld from this viewer,
  *            unscored: count }
  */
 export function trendRows(sessions, viewer) {
-  const rows = [], legacy = [];
+  const rows = [], legacy = [], drills = [];
   let sealed = 0, unscored = 0;
   for (const s of [...(sessions || [])].sort(byDateAsc)) {
     const c = scorecard(s, { viewer });
@@ -52,10 +53,11 @@ export function trendRows(sessions, viewer) {
     if (c.sealed) { if (c.hasAi) sealed++; else unscored++; continue; }   // sealed but nothing behind the seal = unscored
     if (c.status !== "scored") { unscored++; continue; }
     const base = { id: s.id, date: s.date || "", label, scorer: c.scorer, lines: Object.fromEntries(c.lines.map((l) => [l.key, l.score])), mentors: c.mentors || {} };
+    if (c.form === "drill") { drills.push({ ...base, drill: c.drill }); continue; }
     if (c.form === "legacy") legacy.push(base);
     else rows.push({ ...base, sections: c.sections, meets: c.meets });
   }
-  return { rows, legacy, sealed, unscored };
+  return { rows, legacy, drills, sealed, unscored };
 }
 
 /** Per line: the AI series and, where a mentor scored, his series. Missing stays null (never 0). */

@@ -116,6 +116,8 @@ function Transcript({ s, open }) {
             <Lines text={s.sections[k]} />
           </div>
         )) : <Lines text={s.transcript || "No transcript"} />}
+        {/* Context that is not Mark's words (session 9): a drill or written-MA scenario, the dealt peer intent, the AI debrief. Kept in `notes`, never in `sections`. */}
+        {(() => { const n = String(s.notes || "").split("\n").filter((l) => !/^Video:/.test(l)).join("\n").trim(); return n ? <div style={{ marginTop: 10, padding: "6px 8px", borderLeft: `2px solid ${C.faint}`, fontSize: 12, color: C.muted, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n}</div> : null; })()}
       </div>
       {(video || s.conditions) && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 4, fontSize: 11, color: C.muted }}>

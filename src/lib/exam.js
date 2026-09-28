@@ -1,5 +1,6 @@
 // AT Exam state model + persistence. Pure; the component owns React state.
 import { uid, today } from "./users.js";
+import { intentText } from "./peerBrief.js";
 
 export const PHASES = ["setup", "observe", "dialog", "prescribe", "present", "debrief", "scored"];
 export const PHASE_LABEL = { setup: "Set up", observe: "Observe", dialog: "Peer dialog", prescribe: "Prescribe", present: "Examiner – Present", debrief: "Examiner – Q&A", scored: "Score" };
@@ -25,6 +26,8 @@ export function freshExam() {
     drafts: { dialog: "", prescribe: "", debrief: "" },   // composer text survives re-render and reload
     attempts: [], attemptNumber: 1, result: null,
     savedSessionId: null, savedHash: null,
+    brief: null,          // { intent: { outcome, ski, seed } } — the peer's dealt intent (session 9); Mark sees it only on the score screen
+    chris: [],            // Chris's statements retrieved on the presentation — the examiner's register (session 9)
   };
 }
 
@@ -107,7 +110,7 @@ export function buildSession(exam, { parseAIJson }) {
     videoUrl: exam.videoUrl || "", videoSkier: exam.videoSkier || "", videoTime: exam.videoTime || "",
     transcript,
     sections: { private_notes: exam.observations || "", root_cause: exam.rootCause || "", peer_dialog: dialogText, prescription_delivery: prescribeText, presentation: exam.presentation || "", examiner_qa: debriefText },
-    notes: exam.videoUrl ? `Video: ${exam.videoUrl}${exam.videoSkier ? ` | Skier: ${exam.videoSkier}` : ""}${exam.videoTime ? ` | Time: ${exam.videoTime}` : ""}` : "",
+    notes: [exam.videoUrl ? `Video: ${exam.videoUrl}${exam.videoSkier ? ` | Skier: ${exam.videoSkier}` : ""}${exam.videoTime ? ` | Time: ${exam.videoTime}` : ""}` : "", exam.brief?.intent ? `Peer brief (dealt, hidden until scored): the peer was trying to ${intentText(exam.brief.intent)}.` : ""].filter(Boolean).join("\n"),
     summary: JSON.stringify(summary), mentorFeedback: [],
   };
 }

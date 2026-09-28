@@ -124,7 +124,7 @@ export default function App() {
           <>
             {tab === "journal" && <Journal user={user} journal={data.journal} loaded={data.loaded} config={data.config} mentorAssessments={mentorAssessments}
               onEntries={(fn) => setData((d) => ({ ...d, journal: { ...d.journal, entries: fn(d.journal.entries) } }))} />}
-            {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments}
+            {tab === "sparring" && <Sparring maSessions={data.maSessions} mentorAssessments={mentorAssessments} config={data.config}
               onSaved={(s) => setData((d) => ({ ...d, maSessions: [s, ...d.maSessions.filter((x) => x.id !== s.id)] }))} />}
             {tab === "mahistory" && <MAHistory user={user} maSessions={data.maSessions} loaded={data.loaded}
               onUpdate={(s) => setData((d) => ({ ...d, maSessions: d.maSessions.map((x) => (x.id === s.id ? s : x)) }))}
