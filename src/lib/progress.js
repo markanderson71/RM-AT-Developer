@@ -53,7 +53,7 @@ export function trendRows(sessions, viewer) {
     if (c.sealed) { if (c.hasAi) sealed++; else unscored++; continue; }   // sealed but nothing behind the seal = unscored
     if (c.status !== "scored") { unscored++; continue; }
     const base = { id: s.id, date: s.date || "", label, scorer: c.scorer, lines: Object.fromEntries(c.lines.map((l) => [l.key, l.score])), mentors: c.mentors || {} };
-    if (c.form === "drill") { drills.push({ ...base, drill: c.drill }); continue; }
+    if (c.form === "drill") { drills.push({ ...base, drill: c.drill, stage: c.detail?.stage || null, tries: c.detail?.tries || null, score: c.lines[0]?.score ?? null, unitComplete: c.detail?.unit?.complete === true }); continue; }
     if (c.form === "legacy") legacy.push(base);
     else rows.push({ ...base, sections: c.sections, meets: c.meets });
   }
@@ -184,4 +184,17 @@ export function assessmentContext({ sessions, entries, viewer, assessment, users
   });
   const current = hasAssessment(assessment) ? ASSESSMENT_FIELDS.map((f) => `${f.label}: ${String(assessment[f.key] || "").trim() || "(empty)"}`).join("\n") : "";
   return { ma, journal, current };
+}
+
+/** Drill history by line, oldest → newest (session 9 addendum — Mark: "see progress, whether I'm getting closer"). */
+export function drillHistory(drills) {
+  const by = {};
+  for (const d of drills || []) (by[d.drill] ||= []).push(d);
+  return Object.entries(by).map(([line, items]) => {
+    items.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.id).localeCompare(String(b.id)));
+    const scores = items.map((i) => i.score).filter((v) => v != null);
+    const last3 = scores.slice(-3), first3 = scores.slice(0, 3);
+    const avg = (xs) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
+    return { line, items, n: items.length, best: scores.length ? Math.max(...scores) : null, recent: avg(last3), early: avg(first3), complete: items.filter((i) => i.unitComplete).length };
+  }).sort((a, b) => b.n - a.n);
 }

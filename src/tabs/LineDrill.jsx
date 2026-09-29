@@ -10,7 +10,7 @@ import { Button, Hint, Textarea } from "../components/index.jsx";
 import { callClaude, saveMaSession, scoreDrill } from "../api.js";
 import { scoreColor } from "../components/ScoreViews.jsx";
 import { MentorQuote } from "./Rationale.jsx";
-import { DRILLS, DRILL_ORDER, DRILL_SCENARIO_SYSTEM, drillScenarioUser, DRILL_FOLLOWUP_SYSTEM, drillFollowupUser, CHAIN_COACH_SYSTEM, chainStatus, chainCoachUser } from "../lib/sparringPrompts.js";
+import { DRILLS, DRILL_ORDER, DRILL_SCENARIO_SYSTEM, drillScenarioUser, DRILL_FOLLOWUP_SYSTEM, drillFollowupUser, CHAIN_COACH_SYSTEM, chainStatus, chainCoachUser, CHAIN_STAGES, cascadeStatus, CASCADE_COACH_SYSTEM, cascadeCoachUser, allChains } from "../lib/sparringPrompts.js";
 import { freshDrill, drillEmpty, drillSession, dealTask, loadMode, persistMode } from "../lib/sparring.js";
 import { loadIdpTasks, renderTask } from "../lib/idp.js";
 import { hashOf } from "../lib/exam.js";
@@ -43,13 +43,20 @@ export default function LineDrill({ onSaved }) {
     setErr(""); setBusy("Reading your answer, then scoring that line against the form and Chris's statements (about a minute)…"); tick();
     try {
       const r = await scoreDrill({ line: cur.line, passage: cur.passage.trim(), activity: cur.task?.name, peerIntent: cur.peerIntent });
-      const chain = DRILLS[cur.line].coach ? chainStatus(r.passage_extraction) : null;
-      const t = { at: new Date().toISOString(), passage: cur.passage.trim(), score: r.score, why: r.score_rationale, gap: r.gap_to_next, evidence: r.evidence_count, unit: r.unit, chain, justifications: r.justifications, citations: r.citations, citation_details: r.citation_details, scorer: r.meta?.scorer, secs: Math.round((r.meta?.ms?.total || 0) / 1000) };
+      const stage = DRILLS[cur.line].coach ? (cur.stage || "one") : null;
+      const cascade = stage === "cascade" ? cascadeStatus(r.passage_extraction) : null;
+      const chain = stage ? (cascade ? cascade.chains[0] : chainStatus(r.passage_extraction)) : null;
+      const t = { at: new Date().toISOString(), passage: cur.passage.trim(), score: r.score, why: r.score_rationale, gap: r.gap_to_next, evidence: r.evidence_count, unit: r.unit, chain, cascade, stage, chains: stage ? allChains(r.passage_extraction) : null, anchor: r.exemplar_anchor || "", guards: r.quality?.guards_applied || [], justifications: r.justifications, citations: r.citations, citation_details: r.citation_details, scorer: r.meta?.scorer, secs: Math.round((r.meta?.ms?.total || 0) / 1000) };
       upd((s) => ({ tries: [...s.tries, t].slice(-6), followup: "" }));
       let q;
-      if (chain) {   // Chain coach: ask for the first missing link, in Chris's frame — a coach, not an examiner
+      const prevTry = cur.tries[cur.tries.length - 1] || null;   // the coach sees what he said last time and what it asked — it never asks twice
+      const memory = { previous: prevTry?.passage || null, lastAsk: cur.followup || "" };
+      if (cascade) {   // stage 2: two chains across fundamentals, the driver named
+        setBusy("Coach reading your cascade…");
+        q = await callClaude([{ role: "user", content: cascadeCoachUser({ passage: cur.passage, cascade, task: cur.task?.name, intent: cur.peerIntent, ...memory }) }], CASCADE_COACH_SYSTEM, { max_tokens: 260 });
+      } else if (chain) {   // Chain coach: one missing link, Chris's priority, Chris's size — a coach, not an examiner
         setBusy("Coach reading your chain…");
-        q = await callClaude([{ role: "user", content: chainCoachUser({ passage: cur.passage, status: chain, task: cur.task?.name, intent: cur.peerIntent }) }], CHAIN_COACH_SYSTEM, { max_tokens: 220 });
+        q = await callClaude([{ role: "user", content: chainCoachUser({ passage: cur.passage, status: chain, task: cur.task?.name, intent: cur.peerIntent, ...memory }) }], CHAIN_COACH_SYSTEM, { max_tokens: 220 });
       } else {
         setBusy("Examiner's follow-up…");
         q = await callClaude([{ role: "user", content: drillFollowupUser({ line: cur.line, passage: cur.passage, gap: r.gap_to_next, unit: DRILLS[cur.line].unit }) }], DRILL_FOLLOWUP_SYSTEM, { max_tokens: 120 });
@@ -87,10 +94,30 @@ export default function LineDrill({ onSaved }) {
         {busy && !d.scenario && <Hint style={{ color: C.amber }}>{busy}</Hint>}
         {d.scenario && <div style={{ padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", marginBottom: 8 }}><div style={{ fontSize: 10, fontWeight: 700, color: C.dim, marginBottom: 3 }}>{def.generate ? "SCENARIO" : "THE TASK"}</div><div style={{ fontSize: 13, color: C.body, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{d.scenario}</div></div>}
         {d.scenario && (<>
-          <div style={{ fontSize: 13, fontWeight: 600, color: def.color, marginBottom: 4 }}>{def.ask}</div>
-          {last?.chain && <Chain status={last.chain} color={def.color} />}
+          {def.coach && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+              {Object.values(CHAIN_STAGES).map((st) => { const on = (d.stage || "one") === st.key; return <button key={st.key} type="button" disabled={!!busy} onClick={() => upd({ stage: st.key, followup: "" })} style={{ padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", background: on ? `${def.color}18` : "transparent", border: `1px solid ${on ? def.color : C.faint}`, color: on ? def.color : C.muted }}>{st.label}</button>; })}
+              <Hint>{CHAIN_STAGES[d.stage || "one"].hint}</Hint>
+            </div>
+          )}
+          <div style={{ fontSize: 13, fontWeight: 600, color: def.color, marginBottom: 4 }}>{def.coach ? CHAIN_STAGES[d.stage || "one"].ask : def.ask}</div>
+          {def.coach && CHAIN_STAGES[d.stage || "one"].example && <Hint style={{ marginBottom: 6, lineHeight: 1.5, fontStyle: "italic" }}>{CHAIN_STAGES[d.stage || "one"].example}</Hint>}
+          {last?.chain && <Hint style={{ marginBottom: 3 }}>Checklist — any order. ✗ means the scorer did not find it, not that you must say it next.</Hint>}
+          {last?.cascade ? (<>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim }}>CHAIN 1{last.cascade.fundamentals[0] ? ` · ${last.cascade.fundamentals[0]}` : ""}</div><Chain status={last.cascade.chains[0]} color={def.color} />
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim }}>CHAIN 2{last.cascade.fundamentals[1] ? ` · ${last.cascade.fundamentals[1]}` : ""}</div><Chain status={last.cascade.chains[1]} color={def.color} />
+            <div style={{ fontSize: 12, marginBottom: 6, color: last.cascade.driver ? C.green : C.orange }}>{last.cascade.driver ? `✓ Driver named: ${last.cascade.driver}` : "✗ Which fundamental is driving the other? — not named"}{!last.cascade.distinct ? " · ✗ the two chains are not on two distinct fundamentals" : ""}</div>
+          </>) : last?.chain && (<>
+            <Chain status={last.chain} color={def.color} />
+            {last.chains?.length > 1 && (
+              <details style={{ marginBottom: 6 }}>
+                <summary style={{ fontSize: 11, color: C.orange, cursor: "pointer" }}>The clerk read your passage as {last.chains.length} separate claims — that is why links you said can show as missing. Show all {last.chains.length}.</summary>
+                {last.chains.map((st, i) => <div key={i} style={{ marginTop: 4 }}><div style={{ fontSize: 10, color: C.dim }}>claim {i + 1}</div><Chain status={st} color={def.color} /></div>)}
+              </details>
+            )}
+          </>)}
           {d.followup && <div style={{ padding: "6px 10px", borderRadius: 6, borderLeft: `3px solid ${def.coach ? def.color : C.examiner}`, background: `${def.coach ? def.color : C.examiner}0a`, fontSize: 13, color: C.body, marginBottom: 6, lineHeight: 1.55 }}><b style={{ color: def.coach ? def.color : C.examiner }}>{def.coach ? "Coach: " : "Examiner: "}</b>{d.followup}</div>}
-          <Textarea value={d.passage} onChange={(v) => upd({ passage: v })} style={{ minHeight: 120, fontSize: 14, lineHeight: 1.7 }} placeholder={d.followup ? (def.coach ? "Say the whole chain again with that link in it — movement → how → what the ski did → outcome." : "Rework your answer to cover it — say the whole thing again, not just the missing piece.") : def.coach ? "One chain: “Her [movement], which [how], so the ski [what it did on the snow], and that [outcome she wanted / didn't get].”" : "Say it as you would to the examiner. Type or use the mic."} />
+          <Textarea value={d.passage} onChange={(v) => upd({ passage: v })} style={{ minHeight: 120, fontSize: 14, lineHeight: 1.7 }} placeholder={d.followup ? (def.coach ? "Say the whole chain again, shorter, with that link in it — replace, don't add." : "Rework your answer to cover it — say the whole thing again, not just the missing piece.") : def.coach ? "Your order, your words. Five things: the movement (where, which ski) · what the ski did · the outcome she was going for · one reason why. Two sentences." : "Say it as you would to the examiner. Type or use the mic."} />
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
             <Button tone={def.color} disabled={!!busy || d.passage.trim().length < 20} onClick={score} style={{ padding: "7px 14px", fontSize: 13 }}>{busy ? `Scoring… ${secs}s` : d.tries.length ? `Score again (try ${d.tries.length + 1})` : "Score this line"}</Button>
             {last && <Button tone={C.green} disabled={!!busy} onClick={save} style={{ padding: "7px 14px", fontSize: 13 }}>Save to MA History</Button>}
@@ -109,6 +136,8 @@ export default function LineDrill({ onSaved }) {
             </div>
             {!last.unit?.complete && last.unit?.missing?.length > 0 && <div style={{ fontSize: 12, color: C.body, marginTop: 3 }}>Still missing: {last.unit.missing.join(" · ")}.</div>}
             {last.evidence && <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>Evidence — {last.evidence}</div>}
+            {last.guards?.length > 0 && <div style={{ fontSize: 11, color: C.orange, marginTop: 3 }}>Score moved by a rule, not the ladder: {last.guards.join("; ")}</div>}
+            {last.anchor && <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>Compared with a session Chris scored — {String(last.anchor).replace(/^\s*\[?c:[0-9a-f]{8}\]?\s*/i, "")}</div>}
             <div style={{ fontSize: 12, color: "#b0b8c0", marginTop: 4, lineHeight: 1.55 }}>{last.why}</div>
             {last.gap && <div style={{ fontSize: 12, color: C.amber, marginTop: 3 }}>→ {last.gap}</div>}
             {cites.slice(0, 2).map((c) => <MentorQuote key={c.id} c={c} />)}

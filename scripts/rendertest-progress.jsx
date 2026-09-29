@@ -34,7 +34,9 @@ if (process.argv[3]) { config = Object.fromEntries(JSON.parse(fs.readFileSync(pr
 const journal = { entries: [], typeColumn: true };
 const render = (who) => text(renderToString(<Progress user={u(who)} maSessions={sealSessions(sessions, u(who))} journal={journal} config={config} loaded onConfig={() => {}} />));
 
+sessions.push({ id: "d1", date: "2026-09-29", type: "drill", context: "Line drill — Chain coach", activity: "Dynamic Short Turns", sections: { presentation: "p" }, summary: JSON.stringify({ drill: "cause_effect", stage: "one", scores: { cause_effect: 3 }, unit: { complete: true }, tries: 3, meta: { scorer: "v2-rag-5b" } }), mentorFeedback: [] });
 const mark = render("mark");
+ok(mark.includes("Line drills — practice, one line at a time") && mark.includes("Cause & Effect") && mark.includes("1 with a complete unit"), "candidate: drill history block with the saved drill");
 ok(mark.includes("Mentor Development Assessments") && mark.includes("Where to challenge or push: Finish the chain to the outcome, unprompted."), "candidate: reads every mentor's four fields, the fourth included");
 ok(!mark.includes("Your Development Assessment") && !mark.includes("Suggest an assessment"), "candidate: no form, no AI analysis");
 ok(mark.includes("Recurring coaching gaps") && mark.includes("same gap every time") && mark.includes("Chris, Sep 17") && mark.includes("AI 2") && mark.includes("Chris 2"), "candidate: recurring gaps with the Chris citation and both numbers");

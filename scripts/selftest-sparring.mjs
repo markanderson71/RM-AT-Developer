@@ -94,14 +94,57 @@ ok('sessions: sparring / written / chat save with only Mark\'s words in sections
 assert.deepEqual(S.DRILL_ORDER, ['cause_effect', 'desired_performances', 'evaluate', 'prescription', 'equipment']);
 assert.equal(S.DRILLS.cause_effect.coach, true); assert.ok(S.DRILLS.cause_effect.generate.includes('never say "because"'));
 // chain coach: the scaffold names the FIRST missing link in the order the coach asks for them
-const st1 = SP.chainStatus({ connections: [{ body_movement: 'hip rotation', fundamental: 'rotary', how_stated: false, ski_performance: null, outcome: null }] });
-assert.deepEqual(st1.map((l) => l.present), [true, false, false, false]); assert.equal(st1[0].text, 'hip rotation / rotary');
-const st2 = SP.chainStatus({ connections: [{ body_movement: 'x', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', outcome_detail: 'Z-shaped top', complete: true }, { body_movement: 'y' }] });
-assert.deepEqual(st2.map((l) => l.present), [true, true, true, true]); assert.equal(st2[1].text, 'legs cannot turn under the pelvis'); assert.equal(st2[3].text, 'turn_shape / Z-shaped top');
-assert.deepEqual(SP.chainStatus({ connections: [] }).map((l) => l.present), [false, false, false, false]); assert.deepEqual(SP.chainStatus(null).map((l) => l.present), [false, false, false, false]);
+// links in Chris's order: movement/fundamental · where/which ski · what the ski did · outcome · the how (9/24 31:41–33:48, 51:02)
+assert.deepEqual(SP.CHAIN_LINKS.map((l) => l.key), ['body_movement', 'where', 'ski_performance', 'outcome', 'how_stated']);
+const st1 = SP.chainStatus({ connections: [{ body_movement: 'hip rotation', fundamental: 'rotary', how_stated: false, ski_performance: null, outcome: null, phase: 'unspecified', quote: 'her hips rotated' }] });
+assert.deepEqual(st1.map((l) => l.present), [true, false, false, false, false]); assert.equal(st1[0].text, 'hip rotation / rotary');
+const st2 = SP.chainStatus({ connections: [{ body_movement: 'x', phase: 'initiation', quote: 'at initiation the outside ski', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', outcome_detail: 'Z-shaped top', complete: true }, { body_movement: 'y' }] });
+assert.deepEqual(st2.map((l) => l.present), [true, true, true, true, true]); assert.equal(st2[1].text, 'initiation · outside ski'); assert.equal(st2[4].text, 'legs cannot turn under the pelvis'); assert.equal(st2[3].text, 'turn_shape / Z-shaped top');
+assert.equal(SP.whereStatus({ phase: 'unspecified', quote: 'tipping both lower legs above the fall line' }).text, 'above the fall line · both lower legs', 'specificity read from his own words when the clerk left phase unspecified');
+assert.equal(SP.whereStatus({ phase: 'unspecified', quote: 'tipping the legs' }).present, false);
+assert.deepEqual(SP.chainStatus({ connections: [] }).map((l) => l.present), [false, false, false, false, false]); assert.deepEqual(SP.chainStatus(null).map((l) => l.present), [false, false, false, false, false]);
+assert.ok(SP.CHAIN_COACH_SYSTEM.includes('A quick twist doesn\'t allow a variation of rate') && SP.CHAIN_COACH_SYSTEM.includes('in ANY order') && SP.CHAIN_COACH_SYSTEM.includes('Never ask for a link you already asked for') && SP.CHAIN_COACH_SYSTEM.includes('did not credit the mechanism') && SP.CHAIN_COACH_SYSTEM.includes('two sentences'), 'the coach: Chris\'s chain, any order, no repeat asks, how at his size, brevity');
+const cu2 = SP.chainCoachUser({ passage: 'now', status: st1, task: 'T', intent: '', previous: 'before', lastAsk: 'What did the ski do?' });
+assert.ok(cu2.includes('HIS PREVIOUS PASSAGE:\nbefore') && cu2.includes('WHAT YOU ASKED HIM LAST TIME:\nWhat did the ski do?') && cu2.includes('(1 words)'), 'the coach is given his previous try and its own last question');
+assert.ok(!SP.chainCoachUser({ passage: 'p', status: st1, task: 'T' }).includes('PREVIOUS'), 'first try: no memory block');
+assert.ok(!SP.CHAIN_STAGES.one.ask.includes('→') && SP.CHAIN_STAGES.one.ask.includes('in your own order'), 'the drill does not prescribe a sentence order');
 const cu = SP.chainCoachUser({ passage: 'P', status: st1, task: 'Dynamic Short Turns', intent: 'guide' });
-assert.ok(cu.includes('- Body movement: present — "hip rotation / rotary"') && cu.includes('- What the ski did: MISSING') && cu.includes('What the skier was going for: guide'));
-assert.ok(SP.CHAIN_COACH_SYSTEM.includes('FIRST missing link') && SP.CHAIN_COACH_SYSTEM.includes('Never invent what the skier did'));
+assert.ok(cu.includes('- Movement / fundamental: present — "hip rotation / rotary"') && cu.includes('- Where · which ski: MISSING') && cu.includes('- What the ski did: MISSING') && cu.includes('What the skier was going for: guide'));
+assert.ok(SP.CHAIN_COACH_SYSTEM.includes('FIRST missing link') && SP.CHAIN_COACH_SYSTEM.includes('never inventing what the skier did'));
+// stage 2 — cascade: two chains, distinct fundamentals, the driver
+const cx = { primary_fundamental_named: 'rotary', connections: [
+  { body_movement: 'hip rotation', fundamental: 'rotary', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', complete: true },
+  { body_movement: 'inside hip drops', fundamental: 'edging', linked_fundamental: 'rotary', how_stated: false, ski_performance: 'tail washes', outcome: null },
+  { body_movement: 'x', fundamental: 'pressure' } ] };
+const csc = SP.cascadeStatus(cx);
+assert.deepEqual(csc.chains[0].map((l) => l.present), [true, false, true, true, true]); assert.deepEqual(csc.chains[1].map((l) => l.present), [true, true, true, false, false], '"inside hip" names which side — specificity present');
+assert.deepEqual(csc.fundamentals, ["rotary", "edging"]); assert.equal(csc.distinct, true); assert.equal(csc.driver, "rotary"); assert.equal(csc.linked, true);
+const cs1 = SP.cascadeStatus({ connections: [{ fundamental: 'rotary', body_movement: 'a' }] }); assert.equal(cs1.distinct, false); assert.equal(cs1.driver, null); assert.deepEqual(cs1.chains[1].map((l) => l.present), [false, false, false, false, false]);
+const ccu = SP.cascadeCoachUser({ passage: 'P', cascade: csc, task: "T", intent: "" });
+assert.ok(ccu.includes('CHAIN 1 as the scorer read it') && ccu.includes('CHAIN 2:\n- Movement / fundamental: present — "inside hip drops / edging"') && ccu.includes('Fundamentals named: rotary, edging (two distinct). Driving fundamental named: rotary.'));
+assert.ok(SP.cascadeCoachUser({ passage: 'P', cascade: cs1, task: 'T' }).includes('(no second chain found)'));
+assert.deepEqual(Object.keys(SP.CHAIN_STAGES), ['one', 'cascade']);
+assert.equal(SP.allChains(cx).length, 3); assert.deepEqual(SP.allChains(cx)[1].map((l) => l.present), [true, true, true, false, false]); assert.deepEqual(SP.allChains(null), []);
+// the one-chain hint reaches the clerk on a cause_effect drill only, and says what it must say
+{
+  const { extractPassage } = await import('../lib/prompts/extract.js');
+  const { scoreLine: sl } = await import('../lib/score.js');
+  let hinted = null;
+  const defs7 = Array.from({ length: 9 }, (_, i) => ({ id: `${i}`.padStart(32, 'a'), text: `def ${i}`, source: 'psia_doc', source_ref: `at-ma-tu-assessment-form-2026.md#MA › ${i}`, criteria: ['general'], skills: [], type: 'definition', author: 'psia', date: null, metadata: {}, similarity: 0.5 }));
+  const deps = { store: { getBySourceRefPrefix: async () => defs7, searchByEmbedding: async () => [] }, embedQuery: async () => [0.1], extractPassage: async (a) => { hinted = a.reference.one_chain; return { connections: [{ body_movement: 'tipping both lower legs', fundamental: 'edging', how_stated: true, how_quote: 'sidecut engaged, ski bent, edge sank', ski_performance: 'did not skid, tails followed tips', outcome: 'ski_snow_interaction', complete: true }] }; },
+    completeJson: async () => ({ scores: { cause_effect: 3 }, score_rationale: { cause_effect: 'r' }, evidence_count: { cause_effect: 'complete: 1' }, justifications: { cause_effect: { 2: 'a', 3: 'b', 4: 'c', 5: 'd' } }, citations: { cause_effect: [] }, gap_to_next: { cause_effect: 'g' } }) };
+  const r = await sl({ session: { activity: 'Carved Long Turns' }, line: 'cause_effect', section: 'presentation', passage: 'p', drill: true }, { deps });
+  assert.equal(hinted, true); assert.equal(r.unit.complete, true); assert.equal(r.score, 3);
+  void extractPassage;
+}
+assert.equal(S.freshDrill().stage, 'one');
+const cds = S.drillSession({ ...S.freshDrill(), line: 'cause_effect', stage: 'cascade', scenario: 's', passage: 'p', tries: [{ score: 3, unit: { complete: true } }] });
+assert.equal(cds.context, 'Line drill — Chain coach (cascade)'); assert.equal(JSON.parse(cds.summary).stage, 'cascade');
+assert.equal(JSON.parse(S.drillSession({ ...S.freshDrill(), line: 'equipment', scenario: 's', passage: 'p', tries: [{ score: 2 }] }).summary).stage, undefined);
+// drill history on Progress
+const dh = P.drillHistory([{ id: 'a', date: '2026-09-28', drill: 'cause_effect', score: 2, unitComplete: false }, { id: 'b', date: '2026-09-29', drill: 'cause_effect', score: 3, unitComplete: true, stage: 'one' }, { id: 'c', date: '2026-09-27', drill: 'cause_effect', score: 2 }, { id: 'd', date: '2026-09-29', drill: 'equipment', score: 2 }]);
+assert.equal(dh[0].line, 'cause_effect'); assert.deepEqual(dh[0].items.map((i) => i.id), ['c', 'a', 'b']); assert.equal(dh[0].best, 3); assert.equal(dh[0].complete, 1); assert.equal(dh[0].recent, 2.3); assert.equal(dh[1].line, 'equipment');
+const tr2 = P.trendRows([{ ...cds, id: 'z', date: '2026-09-29' }], mark); assert.equal(tr2.drills[0].stage, 'cascade'); assert.equal(tr2.drills[0].unitComplete, true); assert.equal(tr2.drills[0].score, 3);
 for (const k of S.DRILL_ORDER) assert.ok(S.DRILLS[k].unit.length > 80 && S.DRILLS[k].ask && (k === 'desired_performances' ? S.DRILLS[k].generate === false : S.DRILLS[k].generate.length > 50));
 const t1 = S.dealTask(tasks, 'a'); assert.ok(t1.levels.includes('LEVEL III')); assert.equal(S.dealTask(tasks, 'a').name, t1.name);
 assert.ok(SP.drillScenarioUser(S.DRILLS.equipment, dst).includes('Use this task: Dynamic Short Turns'));
@@ -136,7 +179,7 @@ ok('drills: four lines with the scorer\'s units, dealt task, session shape, scor
   };
   const r = await scoreLine({ session: { activity: 'Dynamic Short Turns', peer_intent: 'guide the ski' }, line: 'equipment', section: 'presentation', passage: d.passage, drill: true }, { deps });
   assert.equal(r.score, 3); assert.equal(r.meta.drill, true); assert.equal(r.meta.practice, true);
-  assert.equal(extractedWith.reference.task, 'Dynamic Short Turns'); assert.deepEqual(extractedWith.reference.peer_intent, ['guide the ski']);
+  assert.equal(extractedWith.reference.task, 'Dynamic Short Turns'); assert.deepEqual(extractedWith.reference.peer_intent, ['guide the ski']); assert.equal(extractedWith.reference.one_chain, false, 'equipment drill: no one-chain hint');
   assert.ok(embedded.includes('Equipment: Her 88-underfoot'), 'retrieval ran on the passage\'s own extraction, not on an empty skeleton');
   assert.ok(r.unit && typeof r.unit.complete === 'boolean'); assert.equal(r.citations[0], 'c:00000001');
   await assert.rejects(() => scoreLine({ session: {}, line: 'equipment', section: 'presentation', passage: 'p', drill: true }, { deps: { ...deps, extractPassage: async () => ({}) } }).then((x) => { assert.ok(x.meta.drill); throw new Error('ok-empty'); }), /ok-empty/, 'an empty inventory still scores (query falls back to the passage text)');

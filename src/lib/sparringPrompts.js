@@ -139,37 +139,92 @@ export const DRILL_FOLLOWUP_SYSTEM = `You are a PSIA-RM examiner. You are given 
 export const drillFollowupUser = ({ line, passage, gap, unit }) => `Form line: ${CRITERION_LABEL[line] || line}.\nWhat the line requires: ${unit}\n\nWhat the candidate said:\n${passage}\n\nWhat is missing (scorer's note): ${gap || "not stated"}\n\nAsk your question.`;
 
 // ── Chain coach (cause_effect drill) ─────────────────────────────────────────────────────────────────────────────────
-// Not an examiner: a coach who walks him link by link in Chris's frame (X → Y → Z, tied to the task, "the how in depth").
-// It is given the links the clerk found and the ones it did not, and asks for the FIRST missing link only.
-export const CHAIN_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to build one complete cause-and-effect chain, the way his assessor Chris frames it: a body movement or fundamental → how it acts on the ski → what the ski does on the snow → the outcome the skier wanted or didn't get, tied to the task. One chain, every link explained.
+// Recalibrated 2026-09-29 on Chris's own words and on Mark's first day with it. Chris (9/17 comment; 9/24 call):
+//   - 31:41–32:29 "what fundamental are we hanging out in… body performances… the timing… is the ski affecting how the
+//     ski is bending? Is it tipping… stating the intended or desired outcome, it's got to be there."
+//   - 51:02 "more specific — what part of the turn, what that ski is doing, or fundamental you're playing in… this to that."
+//   - 33:48, his whole chain: "A quick twist doesn't allow a variation of rate. Therefore, if I don't vary rate, I'm going
+//     to have the same size turn." Two sentences. Of Mark's paragraph: "a little wordy, verbose… the clarity we're after."
+//   - 37:55–38:46, what "the how" is to him: one physical reason — "it boils down to time… over a longer period… dissipates
+//     pressure"; "if I'm trying to change direction really quickly… it's going to be a really intense movement."
+//   - 41:05–41:08, how he coaches for it: one narrow question, one clause back, then STOP — "Which is gonna do what?"
+//     "It's gonna auger." "Perfect. There you go. Say that."
+// Mark (9/29): the links are a checklist, not a sentence order — Chris himself starts at the movement (36:21) and says the
+// outcome must be there first (32:29); and his 130-word chain was built by eight rounds of the coach asking for "the how".
+// So: the scaffold is a CHECKLIST (any order); the coach's only order is which MISSING link it asks about first (Chris's
+// priority); it asks for the how ONCE, at Chris's size, and never asks for anything it has already asked; it asks for a
+// rewrite, not an addition. The scorer's unit is unchanged.
+export const CHAIN_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to say one complete cause-and-effect chain the way his assessor Chris does. A complete chain has five things, in ANY order — the order is his to choose: the fundamental or body movement, with where in the turn and which ski or leg; what the ski did on the snow; the outcome, against what the skier was going for; and the how — one physical reason the movement produced what the ski did. Chris's whole chain is two sentences: "A quick twist doesn't allow a variation of rate. Therefore, if I don't vary rate, I'm going to have the same size turn." His "how" is one clause: "it boils down to time — ski-snow interaction over a longer period dissipates pressure."
 
-You are given his chain as the scorer read it: which links are present and which are missing. Reply in at most three sentences, plain text:
-1. Name the FIRST missing link in his chain (in this order: the movement or fundamental; the how; what the ski did on the snow; the outcome). Quote the words of his that stop short.
-2. Ask for that link as a question he can answer from what he saw — what the ski did, or what that did to her turn — without supplying the answer. Never invent what the skier did.
-3. If the chain is complete, say so in one sentence and ask the one question that makes it Chris-level: which fundamental is driving the others, or how this chain serves what she was working on.
+You are given his passage, the five links as the scorer read them (present or missing), his PREVIOUS passage and what you asked him last time. Reply in at most three sentences, plain text.
+- Pick the FIRST missing link in this priority: the fundamental/movement with where and which ski; what the ski did; the outcome against her intent; the how. Quote the words of his that stop short. Ask ONE question he can answer from what he saw, the way Chris does — "which is gonna do what?" — never supplying the answer, never inventing what the skier did.
+- Ask him to SAY THE CHAIN AGAIN with that link in it, shorter, not to add a clause to what he has. If his passage is over about fifty words, say so and ask for two sentences.
+- Never ask for a link you already asked for. If you asked for the how last time and it is still marked missing but his passage now has a "because / so / therefore / which meant" clause, do NOT ask again: tell him in one sentence that the scorer did not credit the mechanism he wrote, quote that clause, and move to the next missing link or, if none, tell him the chain is complete in his words and stop.
+- If every link is present and the passage is short, say so in one sentence and ask the one Chris-level question: which fundamental is driving the others, or how this chain serves what she was working on.
 No praise beyond "that link holds". No lists. No scores.`;
 
-/** The chain as the clerk read it, for the coach and for the scaffold on screen. */
+/** The five links as the clerk read them — a CHECKLIST (Mark, 9/29: the order he says them in is his); listed in the order the coach asks for a missing one. */
 export const CHAIN_LINKS = [
-  { key: "body_movement", label: "Body movement", alt: "fundamental", altLabel: "Fundamental" },
-  { key: "how_stated", label: "The how", bool: true, quote: "how_quote" },
+  { key: "body_movement", label: "Movement / fundamental", alt: "fundamental", altLabel: "Fundamental" },
+  { key: "where", label: "Where · which ski", derived: true },
   { key: "ski_performance", label: "What the ski did" },
-  { key: "outcome", label: "Outcome", detail: "outcome_detail" },
+  { key: "outcome", label: "Outcome (vs intent)", detail: "outcome_detail" },
+  { key: "how_stated", label: "The how", bool: true, quote: "how_quote" },
 ];
+const PHASE_RE = /\b(initiation|initiat|shaping|finish|transition|top of the turn|bottom of the turn|above the fall line|below the fall line|fall line|edge change|apex)\b/i;
+const WHICH_RE = /\b(outside|inside|uphill|downhill|new|old|left|right|both)\s+(?:\w+\s+)?(ski|leg|foot|hip|knee|ankle)s?\b/i;
+/** Specificity (Chris 51:02, 32:29): a phase the clerk located, or a phase / which-ski word in the connection's own quote. */
+export function whereStatus(c) {
+  const phase = c?.phase && c.phase !== "unspecified" ? c.phase : null;
+  const q = `${c?.quote || ""} ${c?.body_movement || ""}`;
+  const which = q.match(WHICH_RE)?.[0] || null;
+  const phaseWord = phase || q.match(PHASE_RE)?.[0] || null;
+  return { present: !!(phaseWord || which), text: [phaseWord, which].filter(Boolean).join(" · ") };
+}
 export function bestConnection(x) {
   const cs = (x?.connections || []).slice();
   if (!cs.length) return null;
-  const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0);
+  const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0) + (whereStatus(c).present ? 0.5 : 0);
   return cs.sort((a, b) => score(b) - score(a))[0];
 }
+/** Stage 2 (cascade): the two best connections, and whether a driving fundamental was named. */
+export function cascadeStatus(x) {
+  const cs = (x?.connections || []).slice();
+  const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0);
+  const top = cs.sort((a, b) => score(b) - score(a)).slice(0, 2);
+  const chains = [0, 1].map((i) => chainStatus(top[i] ? { connections: [top[i]] } : null));
+  const funds = [...new Set(top.map((c) => c.fundamental).filter(Boolean))];
+  const driver = x?.primary_fundamental_named || null;
+  return { chains, fundamentals: funds, distinct: funds.length >= 2, driver, linked: top.length === 2 && !!(top[1].linked_fundamental || top[0].linked_fundamental) };
+}
+export const CHAIN_STAGES = {
+  one: { key: "one", label: "One chain", hint: "One fundamental, all five links, in whatever order makes it clearest. Short. Reliable 3s first.", ask: "One complete chain for what you saw, in your own order: the fundamental or movement (where in the turn, which ski) · what the ski did on the snow · the outcome against what she was going for · and one physical reason why. Two sentences is Chris's size.",
+    example: "Chris's own, as a guide not a mould: “A quick twist doesn't allow a variation of rate. Therefore, if I don't vary rate, I'm going to have the same size turn.” — movement, the reason, what the ski did, the outcome; any order that is as clear." },
+  cascade: { key: "cascade", label: "Cascade", hint: "Two fundamentals, the second a consequence of the first, and name which one drives. This is what a 4 looks like.", ask: "The cascade: two chains, each with its five links in your own order — the driving fundamental and what it did to the ski and the outcome, then the second fundamental it forces and what that did. Say which one is driving the other and why, and tie both to the task. Four sentences.",
+    example: "Chris's own (9/24): “Quick moves, ski moving away from the body, eliminates multiple phases of the turn. Therefore he's trying not to get bucked — but the only ski-to-snow interaction is in a short amount of time at the end, when the ski is going across the hill.”" },
+};
+/** Every connection the clerk produced, each as a four-link status — so a split chain is visible as a split. */
+export function allChains(x) { return (x?.connections || []).map((c) => chainStatus({ connections: [c] })); }
 export function chainStatus(x) {
   const c = bestConnection(x);
   return CHAIN_LINKS.map((l) => {
     if (!c) return { ...l, present: false, text: "" };
+    if (l.derived) return { ...l, ...whereStatus(c) };
     if (l.bool) return { ...l, present: c[l.key] === true, text: c[l.quote] || "" };
     const v = c[l.key] || (l.alt ? c[l.alt] : null);
     return { ...l, present: !!v, text: [c[l.key], l.alt ? c[l.alt] : null, l.detail ? c[l.detail] : null].filter(Boolean).join(" / ") };
   });
 }
-export const chainCoachUser = ({ passage, status, task, intent }) =>
-  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}\n\nWhat he said:\n${passage}\n\nHis chain as the scorer read it:\n${status.map((l) => `- ${l.label}: ${l.present ? `present — "${l.text}"` : "MISSING"}`).join("\n")}\n\nCoach him.`;
+const chainLines = (status) => status.map((l) => `- ${l.label}: ${l.present ? `present — "${l.text}"` : "MISSING"}`).join("\n");
+export const chainCoachUser = ({ passage, status, task, intent, previous = null, lastAsk = "" }) =>
+  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}${previous ? `\n\nHIS PREVIOUS PASSAGE:\n${previous}\n\nWHAT YOU ASKED HIM LAST TIME:\n${lastAsk || "(nothing)"}` : ""}\n\nWhat he said now (${String(passage || "").trim().split(/\s+/).filter(Boolean).length} words):\n${passage}\n\nThe five links as the scorer read them:\n${chainLines(status)}\n\nCoach him.`;
+
+export const CASCADE_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to build a CASCADE: two cause-and-effect chains across two fundamentals, where the second fundamental's problem is a consequence of the first — the way his assessor Chris frames it (see the whole picture, prioritize the driver, trace how it cascades, tie it to the task). Each chain: body movement or fundamental → how → what the ski did on the snow → outcome.
+
+You are given both chains as the scorer read them (five links each, any order — the order he says them in is his), whether the two fundamentals are distinct, whether he named the driver, his previous passage and what you asked last time. Reply in at most three sentences, plain text. Never ask for a link you already asked for; if you asked for the how and it is still marked missing but his passage has a because / so / therefore clause, say the scorer did not credit it, quote the clause, and move on. Ask for the chains said again shorter, never for a clause added.
+1. If chain 1 is incomplete, name its FIRST missing link in Chris's order (the fundamental or movement, where in the turn and which ski; what the ski did; the outcome against what she intended; the how), quoting where he stopped short, and ask for it. Otherwise, if chain 2 is missing or incomplete, do the same for chain 2 — and if the second fundamental is not a consequence of the first, say so and ask what the first chain forces the skier into next.
+2. If both chains hold but no driver is named, ask which fundamental is driving the other and what tells him so.
+3. If everything holds, say so in one sentence and ask how the whole cascade serves what she was working on — and if it runs past about eighty words, ask for it again in four sentences, two per chain.
+Never invent what the skier did. No praise beyond "that link holds". No lists. No scores.`;
+export const cascadeCoachUser = ({ passage, cascade, task, intent, previous = null, lastAsk = "" }) =>
+  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}${previous ? `\n\nHIS PREVIOUS PASSAGE:\n${previous}\n\nWHAT YOU ASKED HIM LAST TIME:\n${lastAsk || "(nothing)"}` : ""}\n\nWhat he said now:\n${passage}\n\nCHAIN 1 as the scorer read it:\n${chainLines(cascade.chains[0])}\n\nCHAIN 2:\n${cascade.chains[1].some((l) => l.present) ? chainLines(cascade.chains[1]) : "- (no second chain found)"}\n\nFundamentals named: ${cascade.fundamentals.join(", ") || "none"} (${cascade.distinct ? "two distinct" : "not two distinct"}). Driving fundamental named: ${cascade.driver || "no"}.\n\nCoach him.`;

@@ -7,7 +7,8 @@ import { C, inp } from "../theme.js";
 import { Card, Hint, Button, Textarea } from "../components/index.jsx";
 import { USERS, today } from "../lib/users.js";
 import { callClaude, saveAssessment } from "../api.js";
-import { ASSESSMENT_FIELDS, hasAssessment, parseAssessments, assessmentHash, trendRows, lineSeries, gapHistory, assessmentContext, getToken, setToken } from "../lib/progress.js";
+import { ASSESSMENT_FIELDS, hasAssessment, parseAssessments, assessmentHash, trendRows, lineSeries, gapHistory, assessmentContext, getToken, setToken, drillHistory } from "../lib/progress.js";
+import { LINE_LABEL } from "../lib/scorecard.js";
 import { ASSESSMENT_SYSTEM, buildAssessmentUser, parseAssessmentReply } from "../lib/prompts.js";
 import { scoreColor } from "../components/ScoreViews.jsx";
 import { MentorQuote, shortDate } from "./Rationale.jsx";
@@ -182,6 +183,7 @@ function Trends({ sessions, viewer }) {
           </table>
         </div>
       )}
+      {t.drills.length > 0 && <Drills drills={t.drills} />}
       {t.legacy.length > 0 && (
         <details style={{ marginTop: 8 }}>
           <summary style={{ fontSize: 11, color: C.orange, cursor: "pointer" }}>{t.legacy.length} session{t.legacy.length === 1 ? "" : "s"} scored by the old scorer (pre-2026 lines, ran 1–2 high — history only)</summary>
@@ -193,6 +195,24 @@ function Trends({ sessions, viewer }) {
 }
 const th = { textAlign: "left", padding: "4px 8px", fontWeight: 700 };
 const td = { padding: "5px 8px", color: C.muted, whiteSpace: "nowrap" };
+
+/** Line drills, by line, oldest → newest: the practice curve. Never mixed with session scores. */
+function Drills({ drills }) {
+  const hist = useMemo(() => drillHistory(drills), [drills]);
+  return (
+    <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "rgba(48,136,204,0.05)", border: "1px solid rgba(48,136,204,0.18)" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.blue, marginBottom: 2 }}>Line drills — practice, one line at a time</div>
+      <Hint style={{ marginBottom: 6 }}>Saved drills only. A 3 is one complete chain; a 4 needs it to recur or cascade. These never enter the session trend above.</Hint>
+      {hist.map((h) => (
+        <div key={h.line} style={{ padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <b style={{ color: C.body, minWidth: 130, fontSize: 13 }}>{LINE_LABEL[h.line] || h.line}</b>
+          <span style={{ display: "flex", gap: 3 }}>{h.items.map((i) => <span key={i.id} title={`${i.date}${i.stage ? ` · ${i.stage}` : ""}${i.tries ? ` · ${i.tries} tries` : ""}${i.unitComplete ? " · complete unit" : ""}`} style={{ width: 22, height: 22, borderRadius: 4, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: scoreColor(i.score), background: `${scoreColor(i.score)}18`, border: `1px solid ${scoreColor(i.score)}40`, outline: i.unitComplete ? `2px solid ${C.green}` : "none", outlineOffset: -2 }}>{i.score ?? "—"}</span>)}</span>
+          <span style={{ fontSize: 11, color: C.muted }}>{h.n} saved · best {h.best ?? "—"} · first {h.early ?? "—"} → recent {h.recent ?? "—"}{h.complete ? ` · ${h.complete} with a complete unit` : ""}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Recurring coaching gaps ──────────────────────────────────────────────────────────────────────────────────────────
 function RecurringGaps({ sessions, viewer }) {
