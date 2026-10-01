@@ -85,7 +85,7 @@ export function drillSession(d) {
   const def = DRILLS[d.line];
   const transcript = `LINE DRILL — ${def?.title || d.line}\n\nSCENARIO:\n${d.scenario}\n\nMARK:\n${d.passage}${d.followup ? `\n\nEXAMINER FOLLOW-UP:\n${d.followup}` : ""}`;
   const summary = last ? { drill: d.line, stage: d.line === "cause_effect" ? (d.stage || "one") : undefined, scores: { [d.line]: last.score }, score_rationale: { [d.line]: last.why || "" }, evidence_count: { [d.line]: last.evidence || "" }, gap_to_next: { [d.line]: last.gap || "" }, justifications: { [d.line]: last.justifications || {} }, citations: { [d.line]: last.citations || [] }, citation_details: last.citation_details || {}, unit: last.unit || null, tries: (d.tries || []).length, meta: { scorer: last.scorer || null, scored_at: last.at || null, drill: true } } : null;
-  return { id: d.savedId || uid(), date: today(), type: "drill", context: `Line drill — ${def?.title || d.line}${d.line === "cause_effect" && d.stage === "cascade" ? " (cascade)" : ""}`, who: "", activity: d.task?.name || "", conditions: "", videoUrl: "", videoSkier: "", videoTime: "",
+  return { id: d.savedId || uid(), date: today(), type: "drill", context: `Line drill — ${def?.title || d.line}${d.line === "cause_effect" && d.stage && d.stage !== "one" ? ` (${d.stage})` : ""}`, who: "", activity: d.task?.name || "", conditions: "", videoUrl: "", videoSkier: "", videoTime: "",
     transcript, sections: { presentation: d.passage, ...(d.followup ? { examiner_qa: `Examiner: ${d.followup}` } : {}) }, notes: `Scenario: ${d.scenario}`, summary: summary ? JSON.stringify(summary) : "", mentorFeedback: [] };
 }
 /** Deal a task for a drill: AT-level tasks, deterministic from a seed so a reload keeps it. */

@@ -10,7 +10,7 @@ import { Button, Hint, Textarea } from "../components/index.jsx";
 import { callClaude, saveMaSession, scoreDrill } from "../api.js";
 import { scoreColor } from "../components/ScoreViews.jsx";
 import { MentorQuote } from "./Rationale.jsx";
-import { DRILLS, DRILL_ORDER, DRILL_SCENARIO_SYSTEM, drillScenarioUser, DRILL_FOLLOWUP_SYSTEM, drillFollowupUser, CHAIN_COACH_SYSTEM, chainStatus, chainCoachUser, CHAIN_STAGES, cascadeStatus, CASCADE_COACH_SYSTEM, cascadeCoachUser, allChains } from "../lib/sparringPrompts.js";
+import { DRILLS, DRILL_ORDER, DRILL_SCENARIO_SYSTEM, drillScenarioUser, DRILL_FOLLOWUP_SYSTEM, drillFollowupUser, CHAIN_COACH_SYSTEM, chainStatus, chainCoachUser, CHAIN_STAGES, blendStatus, BLEND_COACH_SYSTEM, blendCoachUser, allChains } from "../lib/sparringPrompts.js";
 import { freshDrill, drillEmpty, drillSession, dealTask, loadMode, persistMode } from "../lib/sparring.js";
 import { loadIdpTasks, renderTask } from "../lib/idp.js";
 import { hashOf } from "../lib/exam.js";
@@ -44,16 +44,16 @@ export default function LineDrill({ onSaved }) {
     try {
       const r = await scoreDrill({ line: cur.line, passage: cur.passage.trim(), activity: cur.task?.name, peerIntent: cur.peerIntent });
       const stage = DRILLS[cur.line].coach ? (cur.stage || "one") : null;
-      const cascade = stage === "cascade" ? cascadeStatus(r.passage_extraction) : null;
-      const chain = stage ? (cascade ? cascade.chains[0] : chainStatus(r.passage_extraction)) : null;
-      const t = { at: new Date().toISOString(), passage: cur.passage.trim(), score: r.score, why: r.score_rationale, gap: r.gap_to_next, evidence: r.evidence_count, unit: r.unit, chain, cascade, stage, chains: stage ? allChains(r.passage_extraction) : null, anchor: r.exemplar_anchor || "", guards: r.quality?.guards_applied || [], justifications: r.justifications, citations: r.citations, citation_details: r.citation_details, scorer: r.meta?.scorer, secs: Math.round((r.meta?.ms?.total || 0) / 1000) };
+      const blend = stage === "blend" ? blendStatus(r.passage_extraction) : null;
+      const chain = stage ? (blend ? blend.chain : chainStatus(r.passage_extraction)) : null;
+      const t = { at: new Date().toISOString(), passage: cur.passage.trim(), score: r.score, why: r.score_rationale, gap: r.gap_to_next, evidence: r.evidence_count, unit: r.unit, chain, blend, stage, chains: stage ? allChains(r.passage_extraction) : null, anchor: r.exemplar_anchor || "", guards: r.quality?.guards_applied || [], justifications: r.justifications, citations: r.citations, citation_details: r.citation_details, scorer: r.meta?.scorer, secs: Math.round((r.meta?.ms?.total || 0) / 1000) };
       upd((s) => ({ tries: [...s.tries, t].slice(-6), followup: "" }));
       let q;
       const prevTry = cur.tries[cur.tries.length - 1] || null;   // the coach sees what he said last time and what it asked — it never asks twice
       const memory = { previous: prevTry?.passage || null, lastAsk: cur.followup || "" };
-      if (cascade) {   // stage 2: two chains across fundamentals, the driver named
-        setBusy("Coach reading your cascade…");
-        q = await callClaude([{ role: "user", content: cascadeCoachUser({ passage: cur.passage, cascade, task: cur.task?.name, intent: cur.peerIntent, ...memory }) }], CASCADE_COACH_SYSTEM, { max_tokens: 260 });
+      if (blend) {   // stage 2: the blend of fundamentals, what it does to the others, and one chain from it
+        setBusy("Coach reading your blend…");
+        q = await callClaude([{ role: "user", content: blendCoachUser({ passage: cur.passage, blend, task: cur.task?.name, intent: cur.peerIntent, ...memory }) }], BLEND_COACH_SYSTEM, { max_tokens: 260 });
       } else if (chain) {   // Chain coach: one missing link, Chris's priority, Chris's size — a coach, not an examiner
         setBusy("Coach reading your chain…");
         q = await callClaude([{ role: "user", content: chainCoachUser({ passage: cur.passage, status: chain, task: cur.task?.name, intent: cur.peerIntent, ...memory }) }], CHAIN_COACH_SYSTEM, { max_tokens: 220 });
@@ -103,10 +103,13 @@ export default function LineDrill({ onSaved }) {
           <div style={{ fontSize: 13, fontWeight: 600, color: def.color, marginBottom: 4 }}>{def.coach ? CHAIN_STAGES[d.stage || "one"].ask : def.ask}</div>
           {def.coach && CHAIN_STAGES[d.stage || "one"].example && <Hint style={{ marginBottom: 6, lineHeight: 1.5, fontStyle: "italic" }}>{CHAIN_STAGES[d.stage || "one"].example}</Hint>}
           {last?.chain && <Hint style={{ marginBottom: 3 }}>Checklist — any order. ✗ means the scorer did not find it, not that you must say it next.</Hint>}
-          {last?.cascade ? (<>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim }}>CHAIN 1{last.cascade.fundamentals[0] ? ` · ${last.cascade.fundamentals[0]}` : ""}</div><Chain status={last.cascade.chains[0]} color={def.color} />
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim }}>CHAIN 2{last.cascade.fundamentals[1] ? ` · ${last.cascade.fundamentals[1]}` : ""}</div><Chain status={last.cascade.chains[1]} color={def.color} />
-            <div style={{ fontSize: 12, marginBottom: 6, color: last.cascade.driver ? C.green : C.orange }}>{last.cascade.driver ? `✓ Driver named: ${last.cascade.driver}` : "✗ Which fundamental is driving the other? — not named"}{!last.cascade.distinct ? " · ✗ the two chains are not on two distinct fundamentals" : ""}</div>
+          {last?.blend ? (<>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, fontSize: 12 }}>
+              <span style={{ color: last.blend.blendNamed ? C.green : C.red }}>{last.blend.blendNamed ? "✓" : "✗"} Blend named{last.blend.fundamentals.length ? `: ${last.blend.fundamentals.join(" + ")}` : " — which fundamentals?"}</span>
+              <span style={{ color: last.blend.related ? C.green : C.red }}>{last.blend.related ? "✓" : "✗"} Relationship between them</span>
+              <span style={{ color: last.blend.accent ? C.green : C.dim }}>{last.blend.accent ? `✓ Accented: ${last.blend.accent}` : "– Which one is she hanging out in? (optional)"}</span>
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim }}>THE CHAIN FROM THE BLEND</div><Chain status={last.blend.chain} color={def.color} />
           </>) : last?.chain && (<>
             <Chain status={last.chain} color={def.color} />
             {last.chains?.length > 1 && (
@@ -117,7 +120,7 @@ export default function LineDrill({ onSaved }) {
             )}
           </>)}
           {d.followup && <div style={{ padding: "6px 10px", borderRadius: 6, borderLeft: `3px solid ${def.coach ? def.color : C.examiner}`, background: `${def.coach ? def.color : C.examiner}0a`, fontSize: 13, color: C.body, marginBottom: 6, lineHeight: 1.55 }}><b style={{ color: def.coach ? def.color : C.examiner }}>{def.coach ? "Coach: " : "Examiner: "}</b>{d.followup}</div>}
-          <Textarea value={d.passage} onChange={(v) => upd({ passage: v })} style={{ minHeight: 120, fontSize: 14, lineHeight: 1.7 }} placeholder={d.followup ? (def.coach ? "Say the whole chain again with that link in it — replace, don't add; each link once." : "Rework your answer to cover it — say the whole thing again, not just the missing piece.") : def.coach ? "Your order, your words. Five things: the movement (where, which ski) · what the ski did · the outcome she was going for · one reason why. Each link once." : "Say it as you would to the examiner. Type or use the mic."} />
+          <Textarea value={d.passage} onChange={(v) => upd({ passage: v })} style={{ minHeight: 120, fontSize: 14, lineHeight: 1.7 }} placeholder={d.followup ? (def.coach ? "Say the whole thing again with that in it — replace, don't add; each link once." : "Rework your answer to cover it — say the whole thing again, not just the missing piece.") : def.coach ? "Your order, your words. Five things: the movement (where, which ski) · what the ski did · the outcome she was going for · one reason why. Each link once." : "Say it as you would to the examiner. Type or use the mic."} />
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
             <Button tone={def.color} disabled={!!busy || d.passage.trim().length < 20} onClick={score} style={{ padding: "7px 14px", fontSize: 13 }}>{busy ? `Scoring… ${secs}s` : d.tries.length ? `Score again (try ${d.tries.length + 1})` : "Score this line"}</Button>
             {last && <Button tone={C.green} disabled={!!busy} onClick={save} style={{ padding: "7px 14px", fontSize: 13 }}>Save to MA History</Button>}

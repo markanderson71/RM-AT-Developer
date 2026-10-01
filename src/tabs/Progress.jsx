@@ -202,7 +202,7 @@ function Drills({ drills }) {
   return (
     <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "rgba(48,136,204,0.05)", border: "1px solid rgba(48,136,204,0.18)" }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.blue, marginBottom: 2 }}>Line drills — practice, one line at a time</div>
-      <Hint style={{ marginBottom: 6 }}>Saved drills only. A 3 is one complete chain; a 4 needs it to recur or cascade. These never enter the session trend above.</Hint>
+      <Hint style={{ marginBottom: 6 }}>Saved drills only. A 3 is one complete chain; a 4 needs it to recur or to come from a blend of fundamentals. These never enter the session trend above.</Hint>
       {hist.map((h) => (
         <div key={h.line} style={{ padding: "5px 0", borderTop: "1px solid rgba(255,255,255,0.05)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <b style={{ color: C.body, minWidth: 130, fontSize: 13 }}>{LINE_LABEL[h.line] || h.line}</b>

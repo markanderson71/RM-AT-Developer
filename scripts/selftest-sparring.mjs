@@ -111,20 +111,23 @@ assert.ok(!SP.CHAIN_STAGES.one.ask.includes('→') && SP.CHAIN_STAGES.one.ask.in
 const cu = SP.chainCoachUser({ passage: 'P', status: st1, task: 'Dynamic Short Turns', intent: 'guide' });
 assert.ok(cu.includes('- Movement / fundamental: present — "hip rotation / rotary"') && cu.includes('- Where · which ski: MISSING') && cu.includes('- What the ski did: MISSING') && cu.includes('What the skier was going for: guide'));
 assert.ok(SP.CHAIN_COACH_SYSTEM.includes('FIRST missing link') && SP.CHAIN_COACH_SYSTEM.includes('never inventing what the skier did'));
-// stage 2 — cascade: two chains, distinct fundamentals, the driver
-const cx = { primary_fundamental_named: 'rotary', connections: [
-  { body_movement: 'hip rotation', fundamental: 'rotary', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', complete: true },
-  { body_movement: 'inside hip drops', fundamental: 'edging', linked_fundamental: 'rotary', how_stated: false, ski_performance: 'tail washes', outcome: null },
+// stage 2 — blend: fundamentals named, a relationship between them, and one chain from the blend
+const bx = { primary_fundamental_named: 'rotary', connections: [
+  { body_movement: 'hip rotation', fundamental: 'rotary', linked_fundamental: 'edging', quote: 'she rotated the hips instead of tipping, so the edge came late', how_stated: true, how_quote: 'legs cannot turn under the pelvis', ski_performance: 'pivots', outcome: 'turn_shape', complete: true },
   { body_movement: 'x', fundamental: 'pressure' } ] };
-const csc = SP.cascadeStatus(cx);
-assert.deepEqual(csc.chains[0].map((l) => l.present), [true, false, true, true, true]); assert.deepEqual(csc.chains[1].map((l) => l.present), [true, true, true, false, false], '"inside hip" names which side — specificity present');
-assert.deepEqual(csc.fundamentals, ["rotary", "edging"]); assert.equal(csc.distinct, true); assert.equal(csc.driver, "rotary"); assert.equal(csc.linked, true);
-const cs1 = SP.cascadeStatus({ connections: [{ fundamental: 'rotary', body_movement: 'a' }] }); assert.equal(cs1.distinct, false); assert.equal(cs1.driver, null); assert.deepEqual(cs1.chains[1].map((l) => l.present), [false, false, false, false, false]);
-const ccu = SP.cascadeCoachUser({ passage: 'P', cascade: csc, task: "T", intent: "" });
-assert.ok(ccu.includes('CHAIN 1 as the scorer read it') && ccu.includes('CHAIN 2:\n- Movement / fundamental: present — "inside hip drops / edging"') && ccu.includes('Fundamentals named: rotary, edging (two distinct). Driving fundamental named: rotary.'));
-assert.ok(SP.cascadeCoachUser({ passage: 'P', cascade: cs1, task: 'T' }).includes('(no second chain found)'));
-assert.deepEqual(Object.keys(SP.CHAIN_STAGES), ['one', 'cascade']);
-assert.equal(SP.allChains(cx).length, 3); assert.deepEqual(SP.allChains(cx)[1].map((l) => l.present), [true, true, true, false, false]); assert.deepEqual(SP.allChains(null), []);
+const bs = SP.blendStatus(bx);
+assert.deepEqual(bs.fundamentals, ['rotary', 'edging', 'pressure']); assert.equal(bs.blendNamed, true); assert.equal(bs.related, true); assert.equal(bs.accent, 'rotary'); assert.equal(bs.complete, true);
+assert.deepEqual(bs.chain.map((l) => l.present), [true, false, true, true, true]);
+const bs1 = SP.blendStatus({ connections: [{ fundamental: 'rotary', body_movement: 'a', quote: 'she rotated' }] }); assert.equal(bs1.blendNamed, false); assert.equal(bs1.related, false); assert.equal(bs1.accent, null);
+const bs2 = SP.blendStatus({ connections: [{ body_movement: 'tipping with too much pressure on the inside ski', quote: 'she was tipping with too much pressure on the inside ski' }] });
+assert.equal(bs2.blendNamed, true, 'two fundamentals read from his own words when the clerk tagged none'); assert.equal(bs2.related, true);
+const bcu = SP.blendCoachUser({ passage: 'P', blend: bs, task: 'T', intent: '' });
+assert.ok(bcu.includes('Fundamentals named: rotary, edging, pressure (two or more)') && bcu.includes('Relationship between them stated: yes') && bcu.includes('Accented / leading fundamental named: rotary') && bcu.includes('THE CHAIN from the blend'));
+assert.ok(SP.blendCoachUser({ passage: 'P', blend: bs1, task: 'T' }).includes('Relationship between them stated: NO'));
+assert.ok(SP.BLEND_COACH_SYSTEM.includes('how these things are interacting') && SP.BLEND_COACH_SYSTEM.includes('over-reliance on one affects the integration of the others') && SP.BLEND_COACH_SYSTEM.includes('a relationship, not a line'), 'the blend coach carries Chris\'s and the Performance Guide\'s words');
+assert.ok(!('cascadeStatus' in SP) && !SP.CHAIN_STAGES.cascade, 'cascade is gone');
+assert.deepEqual(Object.keys(SP.CHAIN_STAGES), ['one', 'blend']);
+assert.equal(SP.allChains(bx).length, 2); assert.deepEqual(SP.allChains(bx)[1].map((l) => l.present), [true, false, false, false, false]); assert.deepEqual(SP.allChains(null), []);
 // the one-chain hint reaches the clerk on a cause_effect drill only, and says what it must say
 {
   const { extractPassage } = await import('../lib/prompts/extract.js');
@@ -138,13 +141,13 @@ assert.equal(SP.allChains(cx).length, 3); assert.deepEqual(SP.allChains(cx)[1].m
   void extractPassage;
 }
 assert.equal(S.freshDrill().stage, 'one');
-const cds = S.drillSession({ ...S.freshDrill(), line: 'cause_effect', stage: 'cascade', scenario: 's', passage: 'p', tries: [{ score: 3, unit: { complete: true } }] });
-assert.equal(cds.context, 'Line drill — Chain coach (cascade)'); assert.equal(JSON.parse(cds.summary).stage, 'cascade');
+const cds = S.drillSession({ ...S.freshDrill(), line: 'cause_effect', stage: 'blend', scenario: 's', passage: 'p', tries: [{ score: 3, unit: { complete: true } }] });
+assert.equal(cds.context, 'Line drill — Chain coach (blend)'); assert.equal(JSON.parse(cds.summary).stage, 'blend');
 assert.equal(JSON.parse(S.drillSession({ ...S.freshDrill(), line: 'equipment', scenario: 's', passage: 'p', tries: [{ score: 2 }] }).summary).stage, undefined);
 // drill history on Progress
 const dh = P.drillHistory([{ id: 'a', date: '2026-09-28', drill: 'cause_effect', score: 2, unitComplete: false }, { id: 'b', date: '2026-09-29', drill: 'cause_effect', score: 3, unitComplete: true, stage: 'one' }, { id: 'c', date: '2026-09-27', drill: 'cause_effect', score: 2 }, { id: 'd', date: '2026-09-29', drill: 'equipment', score: 2 }]);
 assert.equal(dh[0].line, 'cause_effect'); assert.deepEqual(dh[0].items.map((i) => i.id), ['c', 'a', 'b']); assert.equal(dh[0].best, 3); assert.equal(dh[0].complete, 1); assert.equal(dh[0].recent, 2.3); assert.equal(dh[1].line, 'equipment');
-const tr2 = P.trendRows([{ ...cds, id: 'z', date: '2026-09-29' }], mark); assert.equal(tr2.drills[0].stage, 'cascade'); assert.equal(tr2.drills[0].unitComplete, true); assert.equal(tr2.drills[0].score, 3);
+const tr2 = P.trendRows([{ ...cds, id: 'z', date: '2026-09-29' }], mark); assert.equal(tr2.drills[0].stage, 'blend'); assert.equal(tr2.drills[0].unitComplete, true); assert.equal(tr2.drills[0].score, 3);
 for (const k of S.DRILL_ORDER) assert.ok(S.DRILLS[k].unit.length > 80 && S.DRILLS[k].ask && (k === 'desired_performances' ? S.DRILLS[k].generate === false : S.DRILLS[k].generate.length > 50));
 const t1 = S.dealTask(tasks, 'a'); assert.ok(t1.levels.includes('LEVEL III')); assert.equal(S.dealTask(tasks, 'a').name, t1.name);
 assert.ok(SP.drillScenarioUser(S.DRILLS.equipment, dst).includes('Use this task: Dynamic Short Turns'));

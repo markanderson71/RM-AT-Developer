@@ -10,7 +10,7 @@ export const COACH_SYSTEM = `You are an Alpine Trainer examiner coaching Mark, a
 ${AT_STANDARD}
 
 THE DIFFERENCE, IN ONE PARAGRAPH
-Level 3 MA works through the phases, relates one fundamental to another and names a cause and an effect — A causes B. AT-level MA sees the whole picture first, prioritizes which fundamental is driving the others, traces the cascade through what the ski does on the snow to the outcome the skier wanted, says HOW each link produces the next, and makes the comparison twice: what happened against what the skier intended, and that intent against what the task requires. The prescription is a coaching cue that follows from the cause named, delivered so it serves what the skier was already trying to do. An AT trains instructors, not guests: the point is to develop their understanding, not just fix their movement.
+Level 3 MA works through the phases, relates one fundamental to another and names a cause and an effect — A causes B. AT-level MA sees the whole picture first, names the fundamentals in play and how they relate to one another — the blend, and what an over-reliance on one does to the others — and traces that through what the ski does on the snow to the outcome the skier wanted, says HOW each link produces the next, and makes the comparison twice: what happened against what the skier intended, and that intent against what the task requires. The prescription is a coaching cue that follows from the cause named, delivered so it serves what the skier was already trying to do. An AT trains instructors, not guests: the point is to develop their understanding, not just fix their movement.
 
 HOW YOU PUSH (Chris's questions, in his register — tactical and intent-first, then technical)
 - "What was she intending, top half to bottom half? Was that the snow or a choice?"
@@ -18,7 +18,7 @@ HOW YOU PUSH (Chris's questions, in his register — tactical and intent-first, 
 - "WHERE in the turn? Which phase? Above or below the fall line? Which leg? What's the other leg doing?"
 - "You said grip — what does grip let the ski do, and what did that do to her line?"
 - "Is that a skill deficiency or a DIRT issue? Can she do it but late, or not at all?"
-- "You connected two fundamentals — that's L3. Which one is driving the others, and how does it cascade?"
+- "You connected two fundamentals — that's L3. What fundamental are we hanging out in, or is there a pool? How are they interacting with one another?"
 - "That's an observation, not a diagnosis. What would you ask her to verify it?"
 - "How does your prescription serve what she told you she was working on?"
 - "What does this task look like skied well? Say the ideal, then say how far off she was."
@@ -187,21 +187,36 @@ export function bestConnection(x) {
   const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0) + (whereStatus(c).present ? 0.5 : 0);
   return cs.sort((a, b) => score(b) - score(a))[0];
 }
-/** Stage 2 (cascade): the two best connections, and whether a driving fundamental was named. */
-export function cascadeStatus(x) {
+/**
+ * Stage 2 — BLEND (replaces "cascade", 2026-10-01; Mark: "it should be blended one or more fundamentals and how that blend
+ * can either affect the others or cause a chain"). Vetted against Chris: 31:41–32:29 "this impacting this, and this
+ * impacting this… how these things are interacting with one another… what fundamental are we hanging out in, or
+ * fundamentals, or is there a pool we're speaking to"; 42:23 (approved) "always in relationships between fundamentals,
+ * phase to phase"; 9/17 "rotary and edging are listed but never related to the turn shape she was after". And the
+ * Performance Guide L3 criterion 2: "movements used to accent one or more fundamentals… deliberately blended… an
+ * over-reliance on one fundamental affects the integration of the others." A linear "A forces B" cascade was the old
+ * app's framing, not his. What stage 2 looks for: the blend named (two or more fundamentals, in relationship), what that
+ * blend did to the others or set off, and one chain from it to the ski and the outcome.
+ */
+const FUND_RE = /\b(edg\w*|tipp\w*|angulat\w*|inclinat\w*|pressur\w*|fore[- ]?aft|ski[- ]to[- ]ski|outside ski|rotar\w*|rotat\w*|steer\w*|pivot\w*|guid\w*|flex\w*|extend\w*|extension|balanc\w*)\b/gi;
+const RELATION_RE = /\b(with|while|as|along with|together with|blend\w*|combin\w*|balanc\w* (?:with|against)|too much|over[- ]?reli\w*|dominat\w*|at the expense of|instead of|affect\w*|allow\w*|let|so that|which meant|forc\w*|limit\w*)\b/i;
+export function blendStatus(x) {
   const cs = (x?.connections || []).slice();
   const score = (c) => (c.complete ? 100 : 0) + (c.body_movement || c.fundamental ? 1 : 0) + (c.how_stated ? 1 : 0) + (c.ski_performance ? 1 : 0) + (c.outcome ? 1 : 0);
-  const top = cs.sort((a, b) => score(b) - score(a)).slice(0, 2);
-  const chains = [0, 1].map((i) => chainStatus(top[i] ? { connections: [top[i]] } : null));
-  const funds = [...new Set(top.map((c) => c.fundamental).filter(Boolean))];
-  const driver = x?.primary_fundamental_named || null;
-  return { chains, fundamentals: funds, distinct: funds.length >= 2, driver, linked: top.length === 2 && !!(top[1].linked_fundamental || top[0].linked_fundamental) };
+  const best = cs.sort((a, b) => score(b) - score(a))[0] || null;
+  const funds = [...new Set(cs.flatMap((c) => [c.fundamental, c.linked_fundamental]).filter(Boolean))];
+  const text = cs.map((c) => `${c.quote || ""} ${c.body_movement || ""} ${c.body_consequence || ""}`).join(" ");
+  const named = [...new Set((text.match(FUND_RE) || []).map((w) => w.toLowerCase().replace(/(ing|ed|es|s)$/, "")))];
+  const blendNamed = funds.length >= 2 || named.length >= 2;
+  const related = cs.some((c) => c.linked_fundamental) || RELATION_RE.test(text);
+  const accent = x?.primary_fundamental_named || null;
+  return { chain: chainStatus(best ? { connections: [best] } : null), fundamentals: funds.length ? funds : named, blendNamed, related, accent, complete: !!best?.complete };
 }
 export const CHAIN_STAGES = {
   one: { key: "one", label: "One chain", hint: "One fundamental, all five links, in whatever order makes it clearest. Short. Reliable 3s first.", ask: "One complete chain for what you saw, in your own order: the fundamental or movement (where in the turn, which ski) · what the ski did on the snow · the outcome against what she was going for · and one physical reason why. Each link once; a chain that runs across phases takes a sentence or two per phase.",
     example: "Chris's own, as a guide not a mould: “A quick twist doesn't allow a variation of rate. Therefore, if I don't vary rate, I'm going to have the same size turn.” — movement, the reason, what the ski did, the outcome; any order that is as clear." },
-  cascade: { key: "cascade", label: "Cascade", hint: "Two fundamentals, the second a consequence of the first, and name which one drives. This is what a 4 looks like.", ask: "The cascade: two chains, each with its five links in your own order — the driving fundamental and what it did to the ski and the outcome, then the second fundamental it forces and what that did. Say which one is driving the other and why, and tie both to the task. Each link once.",
-    example: "Chris's own (9/24): “Quick moves, ski moving away from the body, eliminates multiple phases of the turn. Therefore he's trying not to get bucked — but the only ski-to-snow interaction is in a short amount of time at the end, when the ski is going across the hill.”" },
+  blend: { key: "blend", label: "Blend", hint: "Two or more fundamentals in relationship — the blend, what it does to the others or sets off, and one chain from it to the ski and the outcome. This is what a 4 looks like.", ask: "The blend: which fundamentals she is accenting and how they relate (one too strong, one missing, one carrying the other), what that blend does to the other fundamental(s) or starts, and one chain from it to what the ski did and the outcome she was going for. Your order. Each link once.",
+    example: "Chris's own (9/24): “this impacting this, and this impacting this… how these things are interacting with one another — what fundamental are we hanging out in, or fundamentals, or is there a pool we're speaking to?” The Performance Guide's words: an over-reliance on one fundamental affects the integration of the others." },
 };
 /** Every connection the clerk produced, each as a four-link status — so a split chain is visible as a split. */
 export function allChains(x) { return (x?.connections || []).map((c) => chainStatus({ connections: [c] })); }
@@ -219,12 +234,13 @@ const chainLines = (status) => status.map((l) => `- ${l.label}: ${l.present ? `p
 export const chainCoachUser = ({ passage, status, task, intent, previous = null, lastAsk = "" }) =>
   `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}${previous ? `\n\nHIS PREVIOUS PASSAGE:\n${previous}\n\nWHAT YOU ASKED HIM LAST TIME:\n${lastAsk || "(nothing)"}` : ""}\n\nWhat he said now (${String(passage || "").trim().split(/\s+/).filter(Boolean).length} words):\n${passage}\n\nThe five links as the scorer read them:\n${chainLines(status)}\n\nCoach him.`;
 
-export const CASCADE_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to build a CASCADE: two cause-and-effect chains across two fundamentals, where the second fundamental's problem is a consequence of the first — the way his assessor Chris frames it (see the whole picture, prioritize the driver, trace how it cascades, tie it to the task). Each chain: body movement or fundamental → how → what the ski did on the snow → outcome.
+export const BLEND_COACH_SYSTEM = `You are coaching an Alpine Trainer candidate to say a BLENDED cause-and-effect chain the way his assessor Chris does: which fundamentals the skier is accenting and how they relate to one another — "this impacting this, and this impacting this… how these things are interacting" — what that blend does to the other fundamental(s) or sets off, and one chain from it to what the ski did on the snow and the outcome against what she was going for, with the how. In the Performance Guide's words: movements accent one or more fundamentals, deliberately blended; an over-reliance on one affects the integration of the others. This is a relationship, not a line: the blend can affect the others sideways or start a chain — either counts.
 
-You are given both chains as the scorer read them (five links each, any order — the order he says them in is his), whether the two fundamentals are distinct, whether he named the driver, his previous passage and what you asked last time. Reply in at most three sentences, plain text. Never ask for a link you already asked for; if you asked for the how and it is still marked missing but his passage has a because / so / therefore clause, say the scorer did not credit it, quote the clause, and move on. Ask for the chains said again shorter, never for a clause added.
-1. If chain 1 is incomplete, name its FIRST missing link in Chris's order (the fundamental or movement, where in the turn and which ski; what the ski did; the outcome against what she intended; the how), quoting where he stopped short, and ask for it. Otherwise, if chain 2 is missing or incomplete, do the same for chain 2 — and if the second fundamental is not a consequence of the first, say so and ask what the first chain forces the skier into next.
-2. If both chains hold but no driver is named, ask which fundamental is driving the other and what tells him so.
-3. If everything holds, say so in one sentence and ask how the whole cascade serves what she was working on. Ask for it shorter only when a link is said twice or the scenario is restated — a cascade across phases is allowed the sentences it needs.
-Never invent what the skier did. No praise beyond "that link holds". No lists. No scores.`;
-export const cascadeCoachUser = ({ passage, cascade, task, intent, previous = null, lastAsk = "" }) =>
-  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}${previous ? `\n\nHIS PREVIOUS PASSAGE:\n${previous}\n\nWHAT YOU ASKED HIM LAST TIME:\n${lastAsk || "(nothing)"}` : ""}\n\nWhat he said now:\n${passage}\n\nCHAIN 1 as the scorer read it:\n${chainLines(cascade.chains[0])}\n\nCHAIN 2:\n${cascade.chains[1].some((l) => l.present) ? chainLines(cascade.chains[1]) : "- (no second chain found)"}\n\nFundamentals named: ${cascade.fundamentals.join(", ") || "none"} (${cascade.distinct ? "two distinct" : "not two distinct"}). Driving fundamental named: ${cascade.driver || "no"}.\n\nCoach him.`;
+You are given his passage, the blend as the scorer read it (which fundamentals are named, whether a relationship between them is stated, which one he says is accented), the best chain's five links (any order — the order he says them in is his), his previous passage and what you asked last time. Reply in at most three sentences, plain text.
+- If fewer than two fundamentals are named, ask which fundamentals she is "hanging out in" — the pool — from what he saw.
+- Else if no relationship between them is stated, ask what the one is doing to the other: carrying it, crowding it out, making it late, missing so the other has to do its work.
+- Else if the chain from the blend is incomplete, ask for its FIRST missing link in Chris's priority (the movement with where and which ski; what the ski did; the outcome against her intent; the how), quoting where he stopped short.
+- Else say in one sentence that the blend and the chain hold, and ask the one Chris-level question: which fundamental he would change first, and what that does to the blend.
+Never ask for something you already asked for; if you asked for the how and it is still marked missing but his passage has a because / so / therefore clause, say the scorer did not credit it, quote the clause, and move on. Ask for it shorter only when a link is said twice or the scenario is restated. Never invent what the skier did. No praise beyond "that holds". No lists. No scores.`;
+export const blendCoachUser = ({ passage, blend, task, intent, previous = null, lastAsk = "" }) =>
+  `Task: ${task || "unknown"}.${intent ? ` What the skier was going for: ${intent}.` : ""}${previous ? `\n\nHIS PREVIOUS PASSAGE:\n${previous}\n\nWHAT YOU ASKED HIM LAST TIME:\n${lastAsk || "(nothing)"}` : ""}\n\nWhat he said now:\n${passage}\n\nTHE BLEND as the scorer read it:\n- Fundamentals named: ${blend.fundamentals.join(", ") || "none"} (${blend.blendNamed ? "two or more" : "fewer than two"})\n- Relationship between them stated: ${blend.related ? "yes" : "NO"}\n- Accented / leading fundamental named: ${blend.accent || "no"}\n\nTHE CHAIN from the blend, five links:\n${chainLines(blend.chain)}\n\nCoach him.`;
