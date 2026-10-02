@@ -2,7 +2,7 @@
 // The AT Exam keeps its own model in exam.js. Everything else — chat coaches, Written MA, Examiner Sparring, line
 // drills — is here. Nothing in this file reads summary.scores (§15: scorecard() is the only reader).
 import { uid, today } from "./users.js";
-import { OPEN_SYSTEM, SCENARIO_SYSTEM, REVERSE_SYSTEM, COMPARE_SYSTEM, VIDEO_SYSTEM, DRILLS, DRILL_ORDER } from "./sparringPrompts.js";
+import { OPEN_SYSTEM, SCENARIO_SYSTEM, REVERSE_SYSTEM, COMPARE_SYSTEM, VIDEO_SYSTEM, DRILLS, DRILL_ORDER, CHAIN_STAGES } from "./sparringPrompts.js";
 import { compactForSheet, fitSummary } from "./exam.js";
 
 export const MODES = [
@@ -78,14 +78,19 @@ export const probedLines = (probes) => [...new Set((probes || []).filter((m) => 
 // ── Line drills ───────────────────────────────────────────────────────────────────────────────────────────────────
 export { DRILLS, DRILL_ORDER };
 export const freshDrill = () => ({ line: null, task: null, scenario: "", peerIntent: "", passage: "", tries: [], followup: "", stage: "one", savedId: null, savedHash: null });
+/** A stage key that exists. A drill persisted before a stage was renamed (10/2: "cascade" → "blend") would otherwise
+ *  crash the first render after login (CHAIN_STAGES[stage].hint on undefined — white screen). */
+export const drillStage = (d) => (d?.stage && CHAIN_STAGES[d.stage] ? d.stage : "one");
+/** Load the persisted drill with its stage normalised. */
+export const loadDrill = () => { const d = loadMode("drill", freshDrill); const stage = drillStage(d); return stage === d.stage ? d : { ...d, stage }; };
 export const drillEmpty = (d) => !d.line && !d.passage.trim();
 /** The drill's session for MA History: one line, scored on its own; `summary.drill` tells scorecard() the form. */
 export function drillSession(d) {
   const last = [...(d.tries || [])].reverse().find((t) => t?.score != null);
   const def = DRILLS[d.line];
   const transcript = `LINE DRILL — ${def?.title || d.line}\n\nSCENARIO:\n${d.scenario}\n\nMARK:\n${d.passage}${d.followup ? `\n\nEXAMINER FOLLOW-UP:\n${d.followup}` : ""}`;
-  const summary = last ? { drill: d.line, stage: d.line === "cause_effect" ? (d.stage || "one") : undefined, scores: { [d.line]: last.score }, score_rationale: { [d.line]: last.why || "" }, evidence_count: { [d.line]: last.evidence || "" }, gap_to_next: { [d.line]: last.gap || "" }, justifications: { [d.line]: last.justifications || {} }, citations: { [d.line]: last.citations || [] }, citation_details: last.citation_details || {}, unit: last.unit || null, tries: (d.tries || []).length, meta: { scorer: last.scorer || null, scored_at: last.at || null, drill: true } } : null;
-  return { id: d.savedId || uid(), date: today(), type: "drill", context: `Line drill — ${def?.title || d.line}${d.line === "cause_effect" && d.stage && d.stage !== "one" ? ` (${d.stage})` : ""}`, who: "", activity: d.task?.name || "", conditions: "", videoUrl: "", videoSkier: "", videoTime: "",
+  const summary = last ? { drill: d.line, stage: d.line === "cause_effect" ? drillStage(d) : undefined, scores: { [d.line]: last.score }, score_rationale: { [d.line]: last.why || "" }, evidence_count: { [d.line]: last.evidence || "" }, gap_to_next: { [d.line]: last.gap || "" }, justifications: { [d.line]: last.justifications || {} }, citations: { [d.line]: last.citations || [] }, citation_details: last.citation_details || {}, unit: last.unit || null, tries: (d.tries || []).length, meta: { scorer: last.scorer || null, scored_at: last.at || null, drill: true } } : null;
+  return { id: d.savedId || uid(), date: today(), type: "drill", context: `Line drill — ${def?.title || d.line}${d.line === "cause_effect" && drillStage(d) !== "one" ? ` (${drillStage(d)})` : ""}`, who: "", activity: d.task?.name || "", conditions: "", videoUrl: "", videoSkier: "", videoTime: "",
     transcript, sections: { presentation: d.passage, ...(d.followup ? { examiner_qa: `Examiner: ${d.followup}` } : {}) }, notes: `Scenario: ${d.scenario}`, summary: summary ? JSON.stringify(summary) : "", mentorFeedback: [] };
 }
 /** Deal a task for a drill: AT-level tasks, deterministic from a seed so a reload keeps it. */

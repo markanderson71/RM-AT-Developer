@@ -11,12 +11,12 @@ import { callClaude, saveMaSession, scoreDrill } from "../api.js";
 import { scoreColor } from "../components/ScoreViews.jsx";
 import { MentorQuote } from "./Rationale.jsx";
 import { DRILLS, DRILL_ORDER, DRILL_SCENARIO_SYSTEM, drillScenarioUser, DRILL_FOLLOWUP_SYSTEM, drillFollowupUser, CHAIN_COACH_SYSTEM, chainStatus, chainCoachUser, CHAIN_STAGES, blendStatus, BLEND_COACH_SYSTEM, blendCoachUser, allChains } from "../lib/sparringPrompts.js";
-import { freshDrill, drillEmpty, drillSession, dealTask, loadMode, persistMode } from "../lib/sparring.js";
+import { freshDrill, drillEmpty, drillSession, dealTask, loadDrill, drillStage, persistMode } from "../lib/sparring.js";
 import { loadIdpTasks, renderTask } from "../lib/idp.js";
 import { hashOf } from "../lib/exam.js";
 
 export default function LineDrill({ onSaved }) {
-  const [d, setD] = useState(() => loadMode("drill", freshDrill));
+  const [d, setD] = useState(() => loadDrill());
   const [tasks, setTasks] = useState([]);
   const [busy, setBusy] = useState(""); const [err, setErr] = useState(""); const [secs, setSecs] = useState(0);
   const [saveMsg, setSaveMsg] = useState("");
@@ -43,7 +43,7 @@ export default function LineDrill({ onSaved }) {
     setErr(""); setBusy("Reading your answer, then scoring that line against the form and Chris's statements (about a minute)…"); tick();
     try {
       const r = await scoreDrill({ line: cur.line, passage: cur.passage.trim(), activity: cur.task?.name, peerIntent: cur.peerIntent });
-      const stage = DRILLS[cur.line].coach ? (cur.stage || "one") : null;
+      const stage = DRILLS[cur.line].coach ? drillStage(cur) : null;
       const blend = stage === "blend" ? blendStatus(r.passage_extraction) : null;
       const chain = stage ? (blend ? blend.chain : chainStatus(r.passage_extraction)) : null;
       const t = { at: new Date().toISOString(), passage: cur.passage.trim(), score: r.score, why: r.score_rationale, gap: r.gap_to_next, evidence: r.evidence_count, unit: r.unit, chain, blend, stage, chains: stage ? allChains(r.passage_extraction) : null, anchor: r.exemplar_anchor || "", guards: r.quality?.guards_applied || [], justifications: r.justifications, citations: r.citations, citation_details: r.citation_details, scorer: r.meta?.scorer, secs: Math.round((r.meta?.ms?.total || 0) / 1000) };
@@ -96,12 +96,12 @@ export default function LineDrill({ onSaved }) {
         {d.scenario && (<>
           {def.coach && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
-              {Object.values(CHAIN_STAGES).map((st) => { const on = (d.stage || "one") === st.key; return <button key={st.key} type="button" disabled={!!busy} onClick={() => upd({ stage: st.key, followup: "" })} style={{ padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", background: on ? `${def.color}18` : "transparent", border: `1px solid ${on ? def.color : C.faint}`, color: on ? def.color : C.muted }}>{st.label}</button>; })}
-              <Hint>{CHAIN_STAGES[d.stage || "one"].hint}</Hint>
+              {Object.values(CHAIN_STAGES).map((st) => { const on = drillStage(d) === st.key; return <button key={st.key} type="button" disabled={!!busy} onClick={() => upd({ stage: st.key, followup: "" })} style={{ padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", background: on ? `${def.color}18` : "transparent", border: `1px solid ${on ? def.color : C.faint}`, color: on ? def.color : C.muted }}>{st.label}</button>; })}
+              <Hint>{CHAIN_STAGES[drillStage(d)].hint}</Hint>
             </div>
           )}
-          <div style={{ fontSize: 13, fontWeight: 600, color: def.color, marginBottom: 4 }}>{def.coach ? CHAIN_STAGES[d.stage || "one"].ask : def.ask}</div>
-          {def.coach && CHAIN_STAGES[d.stage || "one"].example && <Hint style={{ marginBottom: 6, lineHeight: 1.5, fontStyle: "italic" }}>{CHAIN_STAGES[d.stage || "one"].example}</Hint>}
+          <div style={{ fontSize: 13, fontWeight: 600, color: def.color, marginBottom: 4 }}>{def.coach ? CHAIN_STAGES[drillStage(d)].ask : def.ask}</div>
+          {def.coach && CHAIN_STAGES[drillStage(d)].example && <Hint style={{ marginBottom: 6, lineHeight: 1.5, fontStyle: "italic" }}>{CHAIN_STAGES[drillStage(d)].example}</Hint>}
           {last?.chain && <Hint style={{ marginBottom: 3 }}>Checklist — any order. ✗ means the scorer did not find it, not that you must say it next.</Hint>}
           {last?.blend ? (<>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, fontSize: 12 }}>

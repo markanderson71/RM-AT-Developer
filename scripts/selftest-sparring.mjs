@@ -145,6 +145,9 @@ assert.equal(SP.allChains(bx).length, 2); assert.deepEqual(SP.allChains(bx)[1].m
   void extractPassage;
 }
 assert.equal(S.freshDrill().stage, 'one');
+// 10/2 white screen: a drill persisted with a stage that no longer exists ("cascade") must normalise, not crash the first render.
+assert.equal(S.drillStage({ stage: 'cascade' }), 'one'); assert.equal(S.drillStage({ stage: 'blend' }), 'blend'); assert.equal(S.drillStage({}), 'one');
+assert.equal(JSON.parse(S.drillSession({ ...S.freshDrill(), line: 'cause_effect', stage: 'cascade', scenario: 's', passage: 'p', tries: [{ score: 2 }] }).summary).stage, 'one');
 const cds = S.drillSession({ ...S.freshDrill(), line: 'cause_effect', stage: 'blend', scenario: 's', passage: 'p', tries: [{ score: 3, unit: { complete: true } }] });
 assert.equal(cds.context, 'Line drill — Chain coach (blend)'); assert.equal(JSON.parse(cds.summary).stage, 'blend');
 assert.equal(JSON.parse(S.drillSession({ ...S.freshDrill(), line: 'equipment', scenario: 's', passage: 'p', tries: [{ score: 2 }] }).summary).stage, undefined);
