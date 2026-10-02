@@ -72,9 +72,9 @@ function SessionCard({ s, user, open, onToggle, onUpdate, onDelete }) {
           {!card.sealed && card.status === "scored" && <CoachingPanel session={s} card={card} canPractice={!isMentor} />}
           <Transcript s={s} open={isMentor} />
           {card.sealed
-            ? <BlindScoreForm session={s} viewer={user} onSubmit={async ({ scores, note }) => {
-                const item = { userId: user.key, kind: "blind_score", form: "2026", blind: true, scores, note, ai_at_submit: aiSnapshot(s), timestamp: new Date().toISOString(),
-                  text: formatScoreLine({ who: user.name, date: today(), scores, blind: true, note }) };
+            ? <BlindScoreForm session={s} viewer={user} onSubmit={async ({ scores, note, blind = true }) => {
+                const item = { userId: user.key, kind: "blind_score", form: "2026", blind, scores, note, ai_at_submit: aiSnapshot(s), timestamp: new Date().toISOString(),
+                  text: formatScoreLine({ who: user.name, date: today(), scores, blind, note }) };
                 const { ok, mentorFeedback } = await appendFeedback(s.id, item);
                 if (ok) onUpdate({ ...unseal(s), mentorFeedback });
                 return ok;

@@ -224,7 +224,7 @@ export default function ATExam({ maSessions, mentorAssessments, onSaved }) {
       {exam.phase === "prescribe" && (
         <>
           {contextLine}
-          <Hint style={{ marginBottom: 8 }}>Deliver it as you would on the hill: the IDP task, variations, terrain, and how it serves what they told you they're working on. Task and why-it-helps — not the physics.</Hint>
+          <Hint style={{ marginBottom: 8 }}>Deliver it as you would on the hill: what you saw them do, the change in performance that gets them closer to what they told you they're after, and why it serves that (Chris, 10/2: "it's not about picking a task — what is the change in performance?"). A task only if it helps. A sentence or two.</Hint>
           <Review title="Peer dialog">{exam.dialogMessages.map((m) => `${m.role === "user" ? "Mark" : "Peer"}: ${m.content}`).join("\n")}</Review>
           <Thread messages={exam.prescriptionDialog} me={C.mark} them={C.peer} meLabel="Mark (trainer)" themLabel={exam.who || "Peer"} loading={loading} loadingText="Peer is thinking…" maxHeight={260} />
           <Composer value={exam.drafts.prescribe} onChange={(v) => setDraft("prescribe", v)} onSend={(t) => askPeer("prescriptionDialog", t, true)} disabled={loading} tone={TONE} sendLabel="Say" placeholder={exam.prescriptionDialog.length ? "Continue — answer their question or add the detail they're missing…" : "Deliver your prescription to the instructor…"} />

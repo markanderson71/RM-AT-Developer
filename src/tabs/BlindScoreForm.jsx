@@ -11,7 +11,7 @@ const SCALE = { 1: "not observed", 2: "beginning to appear", 3: "appears, not wi
 const draftKey = (id, who) => `rmat_blind_${who}_${id}`;
 
 export default function BlindScoreForm({ session, viewer, onSubmit }) {
-  const [state, setState] = useState(() => { try { return JSON.parse(window.localStorage.getItem(draftKey(session.id, viewer.key))) || { scores: {}, note: "" }; } catch { return { scores: {}, note: "" }; } });
+  const [state, setState] = useState(() => { try { return JSON.parse(window.localStorage.getItem(draftKey(session.id, viewer.key))) || { scores: {}, note: "", seen: false }; } catch { return { scores: {}, note: "", seen: false }; } });
   const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
   useEffect(() => { try { window.localStorage.setItem(draftKey(session.id, viewer.key), JSON.stringify(state)); } catch { /* in-memory still works */ } }, [state, session.id, viewer.key]);
 
@@ -21,7 +21,7 @@ export default function BlindScoreForm({ session, viewer, onSubmit }) {
     if (!done || busy) return;
     if (!confirm("Submit your scorecard? It can't be changed once the AI score is revealed.")) return;
     setBusy(true); setErr("");
-    const ok = await onSubmit({ scores: state.scores, note: state.note.trim() });
+    const ok = await onSubmit({ scores: state.scores, note: state.note.trim(), blind: !state.seen });
     if (ok) { try { window.localStorage.removeItem(draftKey(session.id, viewer.key)); } catch { /* ignore */ } }
     else { setErr("Couldn't save to the Sheet — your scores are still here. Try again."); setBusy(false); }
   };
@@ -50,6 +50,11 @@ export default function BlindScoreForm({ session, viewer, onSubmit }) {
       ))}
       <Hint style={{ marginBottom: 8 }}>1 not observed · 2 beginning to appear · 3 inconsistent · 4 appears regularly (pass) · 5 frequent · 6 continuous</Hint>
       <textarea value={state.note} onChange={(e) => setState((p) => ({ ...p, note: e.target.value }))} placeholder="Optional — why these scores. One or two sentences per line you feel strongly about is what calibrates the scorer." style={{ ...txta, minHeight: 56, fontSize: 13, marginBottom: 8 }} />
+      {/* 10/2 call: Chris saw the AI number on the OLD app before scoring here, and the card was stored as blind. A seen card is kept, shown and used as an exemplar; it just never counts toward agreement (§9). */}
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: state.seen ? C.orange : C.muted, marginBottom: 8, cursor: "pointer" }}>
+        <input type="checkbox" checked={!!state.seen} onChange={(e) => setState((p) => ({ ...p, seen: e.target.checked }))} style={{ accentColor: C.orange }} />
+        I've already seen the AI's score for this session (on the old app, on a call, from Mark). My card still counts as feedback — it just won't count as a blind comparison.
+      </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Button tone={viewer.color} solid disabled={!done || busy} onClick={submit}>{busy ? "Saving…" : done ? "Submit and reveal the AI score" : `Score all six lines (${LINES.filter((l) => state.scores[l.key]).length}/6)`}</Button>
         {done && <MeetsBadge meets={math.meets} />}

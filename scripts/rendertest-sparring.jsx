@@ -89,3 +89,5 @@ const hm2 = text(renderToString(<MAHistory user={u("mark")} maSessions={[spSess]
 ok(hm2.includes("Debrief (AI)") && hm2.includes("Examiner A, the form: F-line"), "MA History (Mark): the sparring session's debrief shows from notes");
 const hc = text(renderToString(<MAHistory user={u("chris")} maSessions={sealSessions([drillSess, spSess], u("chris"))} loaded onUpdate={noop} onDelete={noop} />));
 ok(hc.includes("Needs your score") && (hc.match(/Needs your score/g) || []).length === 1, "MA History (Chris): the sparring session needs his score; the drill does not");
+const hc2 = text(renderToString(<MAHistory user={u("chris")} maSessions={sealSessions([spSess], u("chris"))} loaded onUpdate={noop} onDelete={noop} />));
+ok(hc2.includes("I've already seen the AI's score for this session") && hc2.includes("won't count as a blind comparison"), "blind form: the 'already seen' checkbox is offered (10/2 call)");
